@@ -53,7 +53,7 @@ Gcs_message_stage::stage_status Gcs_message_stage_lz4::skip_apply(
         << " bytes can "
            "be compressed. Payload size is "
         << original_payload_size << ".");
-    return stage_status::abort;
+    return stage_status::skip;
   }
 
   return stage_status::apply;
@@ -178,7 +178,7 @@ Gcs_message_stage::stage_status Gcs_message_stage_lz4::skip_revert(
            "be uncompressed. Payload size is "
         << packet.get_payload_length() << ".");
 
-    return stage_status::abort;
+    return stage_status::skip;
   }
 
   return stage_status::apply;

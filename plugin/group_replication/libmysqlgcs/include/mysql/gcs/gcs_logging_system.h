@@ -659,10 +659,23 @@ class Gcs_default_debugger {
     @return Return the size of appended information
   */
   inline size_t append_prefix(char *buffer) {
-    strcpy(buffer, GCS_DEBUG_PREFIX);
-    strcpy(buffer + GCS_DEBUG_PREFIX_SIZE, GCS_PREFIX);
+    struct timeval tv;
+    struct tm *tm_p;
+    if (gettimeofday(&tv, nullptr) != -1) {
+      if ((tm_p = localtime((const time_t *)&tv.tv_sec))) {
+        (void)sprintf(buffer,
+                      /* "%04d-%02d-%02d " */
+                      "%02d:%02d:%02d.%06d ",
+                      /*tm_p->tm_year + 1900, tm_p->tm_mon + 1, tm_p->tm_mday,*/
+                      tm_p->tm_hour, tm_p->tm_min, tm_p->tm_sec,
+                      (int)(tv.tv_usec));
+      }
+    }
 
-    return GCS_DEBUG_PREFIX_SIZE + GCS_PREFIX_SIZE;
+    size_t len = strlen(buffer);
+    strcpy(buffer + len, GCS_PREFIX);
+
+    return len + GCS_PREFIX_SIZE;
   }
 
   /**

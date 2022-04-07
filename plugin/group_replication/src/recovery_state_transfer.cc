@@ -338,7 +338,8 @@ void Recovery_state_transfer::build_donor_list(string *selected_donor_uuid) {
     bool not_self = m_uuid.compare(member_uuid);
     bool valid_donor = false;
 
-    if (is_online && not_self) {
+    if (is_online && not_self &&
+        member->get_role() != Group_member_info::MEMBER_ROLE_ARBITRATOR) {
       if (member->get_member_version() <=
           local_member_info->get_member_version()) {
         suitable_donors.push_back(member);

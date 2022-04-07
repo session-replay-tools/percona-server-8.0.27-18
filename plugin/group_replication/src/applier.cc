@@ -57,6 +57,7 @@ Applier_module::Applier_module()
       applier_error(0),
       suspended(false),
       incoming(nullptr),
+      delayed_packets_queue(nullptr),
       pipeline(nullptr),
       stop_wait_timeout(LONG_TIMEOUT),
       applier_channel_observer(nullptr) {
@@ -68,6 +69,12 @@ Applier_module::Applier_module()
   mysql_cond_init(key_GR_COND_applier_module_suspend, &suspend_cond);
   mysql_cond_init(key_GR_COND_applier_module_wait,
                   &suspension_waiting_condition);
+
+  has_delayed_view_change_event = false;
+#ifndef NDEBUG
+  conditional_trap = 0;
+  wait_online = false;
+#endif
 }
 
 Applier_module::~Applier_module() {
@@ -79,6 +86,16 @@ Applier_module::~Applier_module() {
     }
     delete incoming;
   }
+
+  if (this->delayed_packets_queue) {
+    while (!this->delayed_packets_queue->empty()) {
+      Packet *packet = this->delayed_packets_queue->front();
+      this->delayed_packets_queue->pop();
+      delete packet;
+    }
+    delete delayed_packets_queue;
+  }
+
   delete applier_channel_observer;
 
   mysql_mutex_destroy(&run_lock);
@@ -98,6 +115,7 @@ int Applier_module::setup_applier_module(Handler_pipeline_type pipeline_type,
 
   // create the receiver queue
   this->incoming = new Synchronized_queue<Packet *>();
+  this->delayed_packets_queue = new std::queue<Packet *>();
 
   stop_wait_timeout = stop_timeout;
 
@@ -131,7 +149,7 @@ int Applier_module::purge_applier_queue_and_restart_applier_module() {
 
   /* Stop the applier thread */
   Pipeline_action *stop_action = new Handler_stop_action();
-  error = pipeline->handle_action(stop_action);
+  error = pipeline->handle_action(stop_action, false);
   delete stop_action;
   if (error) return error; /* purecov: inspected */
 
@@ -141,7 +159,7 @@ int Applier_module::purge_applier_queue_and_restart_applier_module() {
           applier_module_channel_name, true, /* purge relay logs always*/
           stop_wait_timeout, group_replication_sidno);
 
-  error = pipeline->handle_action(applier_conf_action);
+  error = pipeline->handle_action(applier_conf_action, false);
   delete applier_conf_action;
   if (error) return error; /* purecov: inspected */
 
@@ -151,7 +169,7 @@ int Applier_module::purge_applier_queue_and_restart_applier_module() {
 
   /* Start the applier thread */
   Pipeline_action *start_action = new Handler_start_action();
-  error = pipeline->handle_action(start_action);
+  error = pipeline->handle_action(start_action, false);
   delete start_action;
 
   return error;
@@ -168,7 +186,7 @@ int Applier_module::setup_pipeline_handlers() {
           applier_module_channel_name, reset_applier_logs, stop_wait_timeout,
           group_replication_sidno);
 
-  error = pipeline->handle_action(applier_conf_action);
+  error = pipeline->handle_action(applier_conf_action, false);
   delete applier_conf_action;
   if (error) return error; /* purecov: inspected */
 
@@ -176,7 +194,7 @@ int Applier_module::setup_pipeline_handlers() {
       new Handler_certifier_configuration_action(group_replication_sidno,
                                                  gtid_assignment_block_size);
 
-  error = pipeline->handle_action(cert_conf_action);
+  error = pipeline->handle_action(cert_conf_action, false);
 
   delete cert_conf_action;
 
@@ -230,9 +248,10 @@ void Applier_module::clean_applier_thread_context() {
 }
 
 int Applier_module::inject_event_into_pipeline(Pipeline_event *pevent,
-                                               Continuation *cont) {
+                                               Continuation *cont,
+                                               bool io_buffered) {
   int error = 0;
-  pipeline->handle_event(pevent, cont);
+  pipeline->handle_event(pevent, cont, io_buffered);
 
   if ((error = cont->wait()))
     LogPluginErr(ERROR_LEVEL, ER_GRP_RPL_EVENT_HANDLING_ERROR, error);
@@ -250,7 +269,15 @@ bool Applier_module::apply_action_packet(Action_packet *action_packet) {
   // packet to signal the applier to suspend
   if (action == SUSPENSION_PACKET) {
     suspend_applier_module();
-    return false;
+    if (abort_after_suspended) {
+      LogPluginErrMsg(INFORMATION_LEVEL, ER_LOG_PRINTF_MSG,
+                      "abort queue after suspended");
+      return true;
+    } else {
+      LogPluginErrMsg(INFORMATION_LEVEL, ER_LOG_PRINTF_MSG,
+                      "continue to process queue after suspended");
+      return false;
+    }
   }
 
   if (action == CHECKPOINT_PACKET) {
@@ -311,20 +338,19 @@ int Applier_module::apply_view_change_packet(
                         "prepared transactions",
                         view_change_packet->view_id.c_str()));
     transaction_consistency_manager->schedule_view_change_event(pevent);
-    pevent->set_delayed_view_change_waiting_for_consistent_transactions();
+    has_delayed_view_change_event = true;
+    return error;
   }
 
-  error = inject_event_into_pipeline(pevent, cont);
-  if (!cont->is_transaction_discarded() &&
-      !pevent->is_delayed_view_change_waiting_for_consistent_transactions())
-    delete pevent;
+  error = inject_event_into_pipeline(pevent, cont, false);
+  if (!cont->is_transaction_discarded()) delete pevent;
 
   return error;
 }
 
 int Applier_module::apply_data_packet(Data_packet *data_packet,
                                       Format_description_log_event *fde_evt,
-                                      Continuation *cont) {
+                                      Continuation *cont, bool io_buffered) {
   int error = 0;
   uchar *payload = data_packet->payload;
   uchar *payload_end = data_packet->payload + data_packet->len;
@@ -346,10 +372,16 @@ int Applier_module::apply_data_packet(Data_packet *data_packet,
           new std::list<Gcs_member_identifier>(*data_packet->m_online_members);
     }
 
+    enum_group_replication_consistency_level consistency_level =
+        data_packet->m_consistency_level;
+    if (is_arbitrator_role()) {
+      consistency_level = GROUP_REPLICATION_CONSISTENCY_EVENTUAL;
+    }
+
     Pipeline_event *pevent =
         new Pipeline_event(new_packet, fde_evt, UNDEFINED_EVENT_MODIFIER,
-                           data_packet->m_consistency_level, online_members);
-    error = inject_event_into_pipeline(pevent, cont);
+                           consistency_level, online_members);
+    error = inject_event_into_pipeline(pevent, cont, io_buffered);
 
     delete pevent;
     DBUG_EXECUTE_IF("stop_applier_channel_after_reading_write_rows_log_event", {
@@ -382,9 +414,9 @@ int Applier_module::apply_single_primary_action_packet(
 }
 
 int Applier_module::apply_transaction_prepared_action_packet(
-    Transaction_prepared_action_packet *packet) {
+    Transaction_prepared_action_packet *packet, int *delayed) {
   return transaction_consistency_manager->handle_remote_prepare(
-      packet->get_sid(), packet->m_gno, packet->m_gcs_member_id);
+      packet->get_sid(), packet->m_gno, packet->m_gcs_member_id, delayed);
 }
 
 int Applier_module::apply_sync_before_execution_action_packet(
@@ -397,6 +429,82 @@ int Applier_module::apply_leaving_members_action_packet(
     Leaving_members_action_packet *packet) {
   return transaction_consistency_manager->handle_member_leave(
       packet->m_leaving_members);
+}
+
+int Applier_module::apply_certification_change_action_packet(
+    Certification_packet *packet) {
+  return (get_certification_handler()->get_certifier()->handle_certifier_data(
+      packet->payload, packet->len, packet->m_member_id));
+}
+
+/**
+  Fix sync problems for after consistency when view change is happened
+*/
+void Applier_module::add_delayed_packets() {
+  incoming->push_all(delayed_packets_queue);
+}
+
+bool Applier_module::check_remote_prepare_before_view_change(
+    Transaction_prepared_action_packet *packet) {
+  return transaction_consistency_manager->is_remote_prepare_before_view_change(
+      packet->get_sid(), packet->m_gno);
+}
+
+bool Applier_module::check_and_delay_packet_after_delayed_view_change(
+    Packet *packet) {
+  bool expected = true;
+  int packet_type = packet->get_packet_type();
+  switch (packet_type) {
+    case TRANSACTION_PREPARED_PACKET_TYPE:
+      DBUG_EXECUTE_IF("consistency_after_conditional_trap", {
+        if (conditional_trap) {
+          const char act[] =
+              "now signal "
+              "signal.consistency_after_conditional_trap_waiting "
+              "wait_for "
+              "signal.consistency_after_conditional_trap_continue "
+              "NO_CLEAR_EVENT";
+          assert(!debug_sync_set_action(current_thd, STRING_WITH_LEN(act)));
+        }
+      });
+      DBUG_EXECUTE_IF("consistency_after_set_trap", { conditional_trap = 1; });
+
+      if (!check_remote_prepare_before_view_change(
+              static_cast<Transaction_prepared_action_packet *>(packet))) {
+        LogPluginErrMsg(INFORMATION_LEVEL, ER_LOG_PRINTF_MSG,
+                        "packet type is not expected:%d, buffer it",
+                        packet_type);
+        this->incoming->pop();
+        this->delayed_packets_queue->push(packet);
+        expected = false;
+      }
+      break;
+    case SYNC_BEFORE_EXECUTION_PACKET_TYPE:
+    case ACTION_PACKET_TYPE:
+    case VIEW_CHANGE_PACKET_TYPE:
+    case DATA_PACKET_TYPE:
+    case SINGLE_PRIMARY_PACKET_TYPE:
+    case LEAVING_MEMBERS_PACKET_TYPE:
+    case CERTIFICATION_PACKET_TYPE:
+      LogPluginErrMsg(INFORMATION_LEVEL, ER_LOG_PRINTF_MSG,
+                      "packet type is not expected:%d, buffer it", packet_type);
+      this->incoming->pop();
+      this->delayed_packets_queue->push(packet);
+      expected = false;
+      break;
+    case SYNC_PREPARED_COMPLETE_TYPE:
+      break;
+    default:
+      LogPluginErrMsg(ERROR_LEVEL, ER_LOG_PRINTF_MSG,
+                      "packet type is not expected:%d", packet_type);
+      assert(0);
+  }
+
+  if (expected) {
+    return false;
+  } else {
+    return true;
+  }
 }
 
 int Applier_module::applier_thread_handle() {
@@ -412,8 +520,11 @@ int Applier_module::applier_thread_handle() {
   Format_description_log_event *fde_evt = nullptr;
   Continuation *cont = nullptr;
   Packet *packet = nullptr;
-  bool loop_termination = false;
-  int packet_application_error = 0;
+  bool loop_termination = false, remaining_packets_inited = false,
+       io_buffered = false;
+  int packet_application_error = 0, delayed = 0;
+  int remaining_packets_to_be_processed = 0;
+  size_t applier_batch_size_threshold = 0;
 
   applier_error = setup_pipeline_handlers();
 
@@ -424,7 +535,7 @@ int Applier_module::applier_thread_handle() {
 
   if (!applier_error) {
     Pipeline_action *start_action = new Handler_start_action();
-    applier_error += pipeline->handle_action(start_action);
+    applier_error += pipeline->handle_action(start_action, false);
     delete start_action;
   }
 
@@ -455,7 +566,7 @@ int Applier_module::applier_thread_handle() {
   // Give the handlers access to the applier THD
   thd_conf_action = new Handler_THD_setup_action(applier_thd);
   // To prevent overwrite last error method
-  applier_error += pipeline->handle_action(thd_conf_action);
+  applier_error += pipeline->handle_action(thd_conf_action, false);
   delete thd_conf_action;
 
   // Update thread instrumentation
@@ -473,9 +584,41 @@ int Applier_module::applier_thread_handle() {
 
   // applier main loop
   while (!applier_error && !packet_application_error && !loop_termination) {
-    if (is_applier_thread_aborted()) break;
-
+    if (is_applier_thread_aborted()) {
+      if (remaining_packets_inited) {
+        remaining_packets_to_be_processed--;
+      } else {
+        remaining_packets_to_be_processed = this->incoming->size();
+      }
+      if (remaining_packets_to_be_processed == 0) {
+        my_sleep(1000);
+        break;
+      }
+    }
+    /* Delayed packets are activated by later packets */
     this->incoming->front(&packet);  // blocking
+
+    applier_batch_size_threshold = get_applier_batch_size_threshold_var();
+    if (applier_batch_size_threshold > 0 &&
+        this->incoming->size() > applier_batch_size_threshold) {
+      if (packet->get_packet_type() == DATA_PACKET_TYPE) {
+        io_buffered = true;
+      } else {
+        io_buffered = false;
+      }
+    } else {
+      io_buffered = false;
+    }
+
+    DBUG_EXECUTE_IF(
+        "group_replication_before_commit_wait_recovery_message_applied",
+        { wait_online = true; };);
+
+    if (has_delayed_view_change_event) {
+      if (check_and_delay_packet_after_delayed_view_change(packet)) {
+        continue;
+      }
+    }
 
     switch (packet->get_packet_type()) {
       case ACTION_PACKET_TYPE:
@@ -488,8 +631,8 @@ int Applier_module::applier_thread_handle() {
         this->incoming->pop();
         break;
       case DATA_PACKET_TYPE:
-        packet_application_error =
-            apply_data_packet((Data_packet *)packet, fde_evt, cont);
+        packet_application_error = apply_data_packet(
+            (Data_packet *)packet, fde_evt, cont, io_buffered);
         // Remove from queue here, so the size only decreases after packet
         // handling
         this->incoming->pop();
@@ -501,7 +644,8 @@ int Applier_module::applier_thread_handle() {
         break;
       case TRANSACTION_PREPARED_PACKET_TYPE:
         packet_application_error = apply_transaction_prepared_action_packet(
-            static_cast<Transaction_prepared_action_packet *>(packet));
+            static_cast<Transaction_prepared_action_packet *>(packet),
+            &delayed);
         this->incoming->pop();
         break;
       case SYNC_BEFORE_EXECUTION_PACKET_TYPE:
@@ -531,11 +675,28 @@ int Applier_module::applier_thread_handle() {
             };);
 
         break;
+      case CERTIFICATION_PACKET_TYPE:
+        packet_application_error = apply_certification_change_action_packet(
+            static_cast<Certification_packet *>(packet));
+        this->incoming->pop();
+        break;
+      case SYNC_PREPARED_COMPLETE_TYPE:
+        has_delayed_view_change_event = false;
+        this->incoming->pop();
+        if (delayed_packets_queue->size() > 0) {
+          add_delayed_packets();
+        }
+        break;
       default:
         assert(0); /* purecov: inspected */
     }
 
-    delete packet;
+    if (!delayed) {
+      delete packet;
+    } else {
+      this->incoming->push(packet);
+      delayed = 0;
+    }
   }
 
   if (packet_application_error) applier_error = packet_application_error;
@@ -573,7 +734,7 @@ end:
   // Even on error cases, send a stop signal to all handlers that could be
   // active
   Pipeline_action *stop_action = new Handler_stop_action();
-  int local_applier_error = pipeline->handle_action(stop_action);
+  int local_applier_error = pipeline->handle_action(stop_action, false);
   delete stop_action;
 
   Gcs_interface_factory::cleanup_thread_communication_resources(
@@ -643,6 +804,8 @@ int Applier_module::initialize_applier_thread() {
   if ((mysql_thread_create(key_GR_THD_applier_module_receiver, &applier_pthd,
                            get_connection_attrib(), launch_handler_thread,
                            (void *)this))) {
+    /* applier_thread_is_exiting should be set true to avoid dead loop */
+    applier_thread_is_exiting = true;
     applier_thd_state.set_terminated();
     mysql_mutex_unlock(&run_lock); /* purecov: inspected */
     return 1;                      /* purecov: inspected */
@@ -996,7 +1159,7 @@ Pipeline_member_stats *Applier_module::get_local_pipeline_stats() {
 
   MUTEX_LOCK(guard, &run_lock);
   Pipeline_member_stats *stats = nullptr;
-  auto cert = applier_module->get_certification_handler();
+  auto cert = get_certification_handler();
   auto cert_module = (cert ? cert->get_certifier() : nullptr);
   if (cert_module) {
     stats = new Pipeline_member_stats(

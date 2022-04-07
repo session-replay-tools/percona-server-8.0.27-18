@@ -128,6 +128,19 @@ int Primary_election_handler::execute_primary_election(
       // user
       LogPluginErr(WARNING_LEVEL,
                    ER_GRP_RPL_NO_SUITABLE_PRIMARY_MEM); /* purecov: inspected */
+      if (is_arbitrator_role()) {
+        std::string err_msg;
+        err_msg.assign("arbitrators could not live without a primary node.");
+        kill_transactions_and_leave_on_election_error(err_msg);
+        goto end;
+      }
+    } else {
+      if (is_arbitrator_role()) {
+        std::string err_msg;
+        err_msg.assign("arbitrator could not be alone.");
+        kill_transactions_and_leave_on_election_error(err_msg);
+        goto end;
+      }
     }
     group_events_observation_manager->after_primary_election(
         "", false, mode, PRIMARY_ELECTION_NO_CANDIDATES_ERROR);
@@ -397,7 +410,10 @@ bool Primary_election_handler::pick_primary_member(
         assert(member_info);
         if (member_info && member_info->get_recovery_status() ==
                                Group_member_info::MEMBER_ONLINE)
-          the_primary = member_info;
+          if (member_info->get_role() !=
+              Group_member_info::MEMBER_ROLE_ARBITRATOR) {
+            the_primary = member_info;
+          }
       }
     }
   }

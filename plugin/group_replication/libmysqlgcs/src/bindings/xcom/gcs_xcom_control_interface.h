@@ -457,14 +457,12 @@ class Gcs_xcom_control : public Gcs_control_interface {
     @param[in] message_id the message that conveys the View Change
     @param[in] xcom_nodes Set of nodes that participated in the consensus
                             to deliver the message
-    @param[in] do_not_deliver_to_client  Whether to filter this view from being
-                                         delivered to the client
+    @param[in] same_view  Whether this global view was already delivered.
     @param[in] max_synode XCom max synode
   */
 
   bool xcom_receive_global_view(synode_no const config_id, synode_no message_id,
-                                Gcs_xcom_nodes *xcom_nodes,
-                                bool do_not_deliver_to_client,
+                                Gcs_xcom_nodes *xcom_nodes, bool same_view,
                                 synode_no max_synode);
 
   /*
@@ -586,6 +584,8 @@ class Gcs_xcom_control : public Gcs_control_interface {
               GCS_NOK otherwise.
   */
   enum_gcs_error set_xcom_cache_size(uint64_t size) override;
+
+  enum_gcs_error set_xcom_flp_timeout(uint64_t timeout) override;
 
   /**
     Notify that the current member has left the group and whether it left

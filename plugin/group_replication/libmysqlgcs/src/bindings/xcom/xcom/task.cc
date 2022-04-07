@@ -42,7 +42,6 @@
 #include <stdint.h>
 #endif
 #include "xcom/x_platform.h"
-#include "xcom/xcom_memory.h"
 #include "xcom/xcom_profile.h"
 
 #ifndef XCOM_WITHOUT_OPENSSL
@@ -72,8 +71,6 @@
 #include <sys/types.h>
 #include <time.h>
 
-#include <memory>
-
 #include "xcom/node_connection.h"
 #include "xdr_gen/xcom_vp.h"
 
@@ -101,7 +98,6 @@
 #endif
 
 extern const char *pax_op_to_str(int x);
-extern uint32_t get_my_xcom_id();
 
 task_arg null_arg = {a_end, {0}};
 
@@ -605,7 +601,7 @@ static int active_tasks = 0;
 task_env *task_new(task_func func, task_arg arg, const char *name, int debug) {
   task_env *t;
   if (link_empty(&free_tasks))
-    t = (task_env *)xcom_malloc(sizeof(task_env));
+    t = (task_env *)malloc(sizeof(task_env));
   else
     t = container_of(link_extract_first(&free_tasks), task_env, l);
   IFDBG(D_NONE, FN; PTREXP(t); STREXP(name); NDBG(active_tasks, d););
@@ -1108,11 +1104,9 @@ int block_fd(int fd) {
   return x;
 }
 
-#ifndef AGGRESSIVE_SWEEP
 /* purecov: begin deadcode */
 int is_only_task() { return link_first(&tasks) == link_last(&tasks); }
 /* purecov: end */
-#endif
 
 static task_env *first_runnable() { return (task_env *)link_first(&tasks); }
 
@@ -1133,6 +1127,7 @@ void set_should_exit_getter(should_exit_getter x) { get_should_exit = x; }
 static double idle_time = 0.0;
 void task_loop() {
   task_env *t = 0;
+  int running_task_counter;
   /* While there are tasks */
   for (;;) {
     /* check forced exit callback */
@@ -1140,6 +1135,7 @@ void task_loop() {
       terminate_and_exit();
     }
 
+    running_task_counter = active_tasks;
     t = first_runnable();
     /* While runnable tasks */
     while (runnable_tasks()) {
@@ -1162,6 +1158,11 @@ void task_loop() {
             t->terminate = TERMINATED;
             task_unref(t);
             stack = NULL;
+          }
+          running_task_counter--;
+          /* break the while loop in order to avoid starvation */
+          if (running_task_counter <= 0) {
+            break;
           }
         }
       }
@@ -1331,6 +1332,8 @@ static inline task_event event_extract() {
 #endif
 
 /* purecov: begin deadcode */
+extern uint32_t get_my_xcom_id();
+
 void ev_print(task_event te) {
   enum { bufsize = 10000 };
   static char buf[bufsize];

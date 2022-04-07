@@ -134,6 +134,9 @@ void get_server_startup_prerequirements(Trans_context_info &requirements);
 bool get_server_encoded_gtid_executed(uchar **encoded_gtid_executed,
                                       size_t *length);
 
+void add_to_gtid_executed(rpl_sidno sidno, rpl_gno gno);
+int add_text_to_gtid_executed(const char *text);
+
 #if !defined(NDEBUG)
 /**
   Returns a text representation of a encoded GTID set.

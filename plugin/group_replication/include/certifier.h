@@ -85,6 +85,11 @@ class Gtid_set_ref : public Gtid_set {
   int64 parallel_applier_sequence_number;
 };
 
+typedef struct Cert_basic_info {
+  Gtid_set_ref *gtid_ref;
+  uint64 recorded_timestamp;
+} Cert_basic_info;
+
 /**
   This class is a core component of the database state machine
   replication protocol. It implements conflict detection based
@@ -107,7 +112,8 @@ class Gtid_set_ref : public Gtid_set {
   negatively certified. Otherwise, this transaction is marked
   certified and goes into applier.
 */
-typedef std::unordered_map<std::string, Gtid_set_ref *> Certification_info;
+typedef std::unordered_map<std::string, Cert_basic_info> Certification_info;
+typedef std::map<uint64, std::string> Certification_index;
 
 class Certifier_broadcast_thread {
  public:
@@ -140,11 +146,7 @@ class Certifier_broadcast_thread {
   */
   void dispatcher();
 
-  /**
-    Period (in seconds) between stable transactions set
-    broadcast.
-  */
-  static const int BROADCAST_GTID_EXECUTED_PERIOD = 60;  // seconds
+  void rest_for_a_while();
 
  private:
   /**
@@ -158,8 +160,7 @@ class Certifier_broadcast_thread {
   mysql_mutex_t broadcast_dispatcher_lock;
   mysql_cond_t broadcast_dispatcher_cond;
   thread_state broadcast_thd_state;
-  size_t broadcast_counter;
-  int broadcast_gtid_executed_period;
+  size_t gc_counter;
 
   /**
     Broadcast local GTID_EXECUTED to group.
@@ -183,13 +184,12 @@ class Certifier_interface : public Certifier_stats {
       std::map<std::string, std::string> *cert_info) = 0;
   virtual int set_certification_info(
       std::map<std::string, std::string> *cert_info) = 0;
-  virtual int stable_set_handle() = 0;
   virtual bool set_group_stable_transactions_set(
       Gtid_set *executed_gtid_set) = 0;
   virtual void enable_conflict_detection() = 0;
   virtual void disable_conflict_detection() = 0;
   virtual bool is_conflict_detection_enable() = 0;
-  virtual ulonglong get_certification_info_size() override = 0;
+  virtual bool is_gtid_committed(const Gtid &gtid) = 0;
 };
 
 class Certifier : public Certifier_interface {
@@ -326,6 +326,10 @@ class Certifier : public Certifier_interface {
     */
   ulonglong get_certification_info_size() override;
 
+  ulonglong get_certification_add_velocity() override;
+  ulonglong get_certification_delete_velocity() override;
+  ulonglong get_certification_estimated_replay_time() override;
+
   /**
     Get method to retrieve the last conflict free transaction.
 
@@ -371,16 +375,6 @@ class Certifier : public Certifier_interface {
                                                 bool local);
 
   /**
-    Computes intersection between all sets received, so that we
-    have the already applied transactions on all servers.
-
-    @return the operation status
-      @retval 0      OK
-      @retval !=0    Error
-  */
-  int stable_set_handle() override;
-
-  /**
     This member function shall add transactions to the stable set
 
     @param executed_gtid_set  The GTID set of the transactions to be added
@@ -422,6 +416,14 @@ class Certifier : public Certifier_interface {
     @retval False  otherwise
   */
   bool is_conflict_detection_enable() override;
+
+  bool is_gtid_committed(const Gtid &gtid) override;
+  /**
+    Removes the intersection of the received transactions stable
+    sets from certification database.
+   */
+
+  void garbage_collect(int *multiplied_sleep_times);
 
  private:
   /**
@@ -584,12 +586,20 @@ class Certifier : public Certifier_interface {
     Certification database.
   */
   Certification_info certification_info;
+  Certification_index certification_index;
   Sid_map *certification_info_sid_map;
 
   ulonglong positive_cert;
   ulonglong negative_cert;
   int64 parallel_applier_last_committed_global;
   int64 parallel_applier_sequence_number;
+  ulonglong last_cert_size;
+  int last_delete_items;
+  double last_add_usec;
+  double last_add_velocity;
+  double last_delete_usec;
+  double last_replay_velocity;
+  double estimated_replay_time;
 
 #if !defined(NDEBUG)
   bool certifier_garbage_collection_block;
@@ -652,6 +662,8 @@ class Certifier : public Certifier_interface {
   */
   bool certifying_already_applied_transactions;
 
+  uint64 timestamp_counter;
+
   /*
     Sid map to store the GTIDs that are executed in the group.
   */
@@ -699,6 +711,8 @@ class Certifier : public Certifier_interface {
   */
   bool conflict_detection_enable;
 
+  int single_primary_fast_mode;
+
   mysql_mutex_t LOCK_members;
 
   /**
@@ -733,10 +747,14 @@ class Certifier : public Certifier_interface {
   Gtid_set *get_certified_write_set_snapshot_version(const char *item);
 
   /**
-    Removes the intersection of the received transactions stable
-    sets from certification database.
-   */
-  void garbage_collect();
+    Computes intersection between all sets received, so that we
+    have the already applied transactions on all servers.
+
+    @return the operation status
+      @retval 0      OK
+      @retval !=0    Error
+  */
+  int stable_set_handle();
 
   /**
     Clear incoming queue.

@@ -44,7 +44,6 @@
 #include "xcom/xcom_cfg.h"
 #include "xcom/xcom_common.h"
 #include "xcom/xcom_detector.h"
-#include "xcom/xcom_memory.h"
 #include "xcom/xcom_profile.h"
 #include "xcom/xcom_transport.h"
 #include "xcom/xcom_vp_str.h"
@@ -64,6 +63,23 @@ struct lru_machine {
 };
 
 static synode_no last_removed_cache;
+static uint64_t highest_msgno = 0;
+static uint64_t cache_length = 0;
+static uint64_t occupation = 0;
+static linkage hash_stack = {0, &hash_stack,
+                             &hash_stack}; /* Head of the hash stack */
+static linkage protected_lru = {
+    0, &protected_lru, &protected_lru}; /* Head of LRU chain of cache hits */
+static linkage probation_lru = {
+    0, &probation_lru, &probation_lru}; /* Head of LRU chain of cache misses */
+
+static size_t size_decrement = MAX_CACHE_SIZE / 2000;
+
+#define BUCKETS MAX_CACHE_SIZE
+
+static inline int can_deallocate(lru_machine *link_iter);
+static size_t do_shrink_cache(bool force);
+static pax_machine *hash_out(pax_machine *p);
 
 synode_no cache_get_last_removed() { return last_removed_cache; }
 
@@ -81,11 +97,6 @@ int was_removed_from_cache(synode_no x) {
          !synode_gt(x, last_removed_cache);
 }
 
-static size_t length_increment = INCREMENT;
-static size_t size_decrement = INCREMENT / 10;
-
-#define BUCKETS length_increment
-
 struct stack_machine {
   linkage stack_link;
   uint64_t start_msgno;
@@ -93,16 +104,9 @@ struct stack_machine {
   linkage *pax_hash;
 };
 
-static linkage hash_stack = {0, &hash_stack,
-                             &hash_stack}; /* Head of the hash stack */
-static linkage protected_lru = {
-    0, &protected_lru, &protected_lru}; /* Head of LRU chain of cache hits */
-static linkage probation_lru = {
-    0, &probation_lru, &probation_lru}; /* Head of LRU chain of cache misses */
-
 static void hash_init(stack_machine *hash_bucket) {
   size_t i;
-  hash_bucket->pax_hash = (linkage *)xcom_malloc(sizeof(linkage) * BUCKETS);
+  hash_bucket->pax_hash = (linkage *)malloc(sizeof(linkage) * BUCKETS);
   for (i = 0; i < BUCKETS; i++) {
     link_init(&hash_bucket->pax_hash[i], TYPE_HASH("pax_machine"));
   }
@@ -118,15 +122,13 @@ static unsigned int synode_hash(synode_no synode) {
          (unsigned int)BUCKETS;
 }
 
-static uint64_t highest_msgno = 0;
-static uint64_t cache_length = 0;
-static uint64_t occupation = 0;
-
-static void do_increment_step();
-
 static pax_machine *hash_in(pax_machine *pm) {
   synode_no synode = pm->synode;
   IFDBG(D_NONE, FN; PTREXP(pm); SYCEXP(synode););
+
+  if (occupation >= cache_length) {
+    return nullptr;
+  }
 
   if (highest_msgno < synode.msgno) highest_msgno = synode.msgno;
 
@@ -137,7 +139,7 @@ static pax_machine *hash_in(pax_machine *pm) {
       link_iter->occupation++;
       occupation++;
       if (occupation == cache_length) {
-        do_increment_step();
+        do_shrink_cache(true);
       }
       break;
     }
@@ -264,7 +266,6 @@ static void deinit_pax_machine(pax_machine *p, lru_machine *l) {
     free_bit_set(p->proposer.prop_nodeset);
     p->proposer.prop_nodeset = NULL;
   }
-  link_out(&p->watchdog);
 }
 
 static void free_lru_machine(lru_machine *link_iter) {
@@ -306,7 +307,9 @@ pax_machine *get_cache_no_touch(synode_no synode, bool_t force) {
 
     retval = hash_out(&l->pax);          /* Remove from hash table */
     init_pax_machine(retval, l, synode); /* Initialize */
-    hash_in(retval);                     /* Insert in hash table again */
+    if (hash_in(retval) == NULL) {       /* Insert in hash table again */
+      return NULL;
+    }
   }
   IFDBG(D_NONE, FN; SYCEXP(synode); PTREXP(retval));
   return retval;
@@ -333,6 +336,12 @@ static inline int can_deallocate(lru_machine *link_iter) {
 
   /* If we have no site, or site was just installed, refuse deallocation */
   if (site == 0) return 0;
+
+  ulong basic_timeout = DEFAULT_DETECTOR_LIVE_TIMEOUT;
+  if (the_app_xcom_cfg) {
+    basic_timeout = the_app_xcom_cfg->m_flp_timeout;
+  }
+
   /*
           With the patch that was put in to ensure that nodes always see  a
           global  view  message when it joins, the node that joins may need
@@ -343,13 +352,14 @@ static inline int can_deallocate(lru_machine *link_iter) {
           past that point. This test effectively stops  garbage  collection
           of  old  messages until the joining node has got a chance to tell
           the others about its low water mark. If  it  has  not  done  that
-          within  DETECTOR_LIVE_TIMEOUT,  it will be considered dead by the
-          other nodes anyway, and expelled.
+          within flp timeout,  it will be considered dead by
+          the other nodes anyway, and expelled.
   */
-  if ((site->install_time + DETECTOR_LIVE_TIMEOUT) > task_now()) return 0;
+  if ((site->install_time + basic_timeout) > task_now()) return 0;
   if (dealloc_site == 0) /* Synode does not match any site, OK to deallocate */
     return 1;
-  delivered_msg = get_min_delivered_msg(site);
+
+  delivered_msg = get_min_delivered_msg(site, basic_timeout);
   if (synode_eq(delivered_msg,
                 null_synode)) /* Missing info from some node, not OK */
     return 0;
@@ -365,16 +375,17 @@ static uint64_t cache_size = 0;
   into the probation_lru, so we can always start scanning at the end of
   protected_lru. lru_get will always look in probation_lru first.
 */
-size_t shrink_cache() {
+static size_t do_shrink_cache(bool force) {
   size_t shrunk = 0;
   FWD_ITER(&protected_lru, lru_machine, {
-    if (above_cache_limit() && can_deallocate(link_iter)) {
+    if ((force || above_cache_limit()) && can_deallocate(link_iter)) {
       last_removed_cache = link_iter->pax.synode;
       hash_out(&link_iter->pax); /* Remove from hash table */
       link_into(link_out(&link_iter->lru_link),
                 &probation_lru); /* Put in probation lru */
       init_pax_machine(&link_iter->pax, link_iter, null_synode);
-      if (shrunk++ == size_decrement) {
+      shrunk++;
+      if (shrunk == size_decrement) {
         break;
       }
     } else {
@@ -383,6 +394,8 @@ size_t shrink_cache() {
   });
   return shrunk;
 }
+
+size_t shrink_cache() { return do_shrink_cache(false); }
 
 void xcom_cache_var_init() {}
 
@@ -398,7 +411,6 @@ pax_machine *init_pax_machine(pax_machine *p, lru_machine *lru,
   p->synode = synode;
   p->last_modified = 0.0;
   link_init(&p->rv, TYPE_HASH("task_env"));
-  link_init(&p->watchdog, TYPE_HASH("time_queue"));
   init_ballot(&p->proposer.bal, -1, 0);
   init_ballot(&p->proposer.sent_prop, 0, 0);
   init_ballot(&p->proposer.sent_learn, -1, 0);
@@ -416,7 +428,6 @@ pax_machine *init_pax_machine(pax_machine *p, lru_machine *lru,
   p->op = initial_op;
   p->force_delivery = 0;
   p->enforcer = 0;
-  SET_PAXOS_FSM_STATE(p, paxos_fsm_idle);
   return p;
 }
 
@@ -554,7 +565,7 @@ uint64_t set_max_cache_size(uint64_t x) {
 static void expand_lru() {
   uint64_t i;
   for (i = 0; i < BUCKETS; i++) {
-    lru_machine *l = (lru_machine *)xcom_calloc(1, sizeof(lru_machine));
+    lru_machine *l = (lru_machine *)calloc(1, sizeof(lru_machine));
     link_init(&l->lru_link, TYPE_HASH("lru_machine"));
     link_into(&l->lru_link, &probation_lru);
     init_pax_machine(&l->pax, l, null_synode);
@@ -563,32 +574,12 @@ static void expand_lru() {
 }
 
 static void add_stack_machine(uint64_t start_msgno) {
-  stack_machine *hash_bucket =
-      (stack_machine *)xcom_malloc(sizeof(stack_machine));
+  stack_machine *hash_bucket = (stack_machine *)malloc(sizeof(stack_machine));
   link_init(&hash_bucket->stack_link, TYPE_HASH("stack_machine"));
   hash_bucket->occupation = 0;
   hash_bucket->start_msgno = start_msgno;
   hash_init(hash_bucket);
   link_follow(&hash_bucket->stack_link, &hash_stack);
-}
-
-static void do_increment_step() {
-  expand_lru();
-  add_stack_machine(highest_msgno);
-}
-
-static void do_decrement_step() {
-  uint count = 0;
-  FWD_ITER(&probation_lru, lru_machine, {
-    free_lru_machine(link_iter);
-    if (++count == BUCKETS) break;
-  })
-
-  linkage *tmp = link_last(&hash_stack);
-  free(((stack_machine *)tmp)->pax_hash);
-  link_out(tmp);
-  ((stack_machine *)link_last(&hash_stack))->start_msgno = 0;
-  free(tmp);
 }
 
 /* Use vars instead of defines for unit testing */
@@ -599,7 +590,7 @@ static float min_length_threshold = MIN_LENGTH_THRESHOLD;
 
 /* Shrink the cache if appropriate, else return error code */
 uint16_t check_decrease() {
-  /* Do not decrease before 500k length */
+  /* Do not decrease before dec_threshold_length */
   if ((cache_length <= dec_threshold_length)) return CACHE_TOO_SMALL;
   /* Oldest hash item is empty */
   if (((stack_machine *)link_last(&hash_stack))->occupation != 0)
@@ -616,7 +607,6 @@ uint16_t check_decrease() {
        (float)the_app_xcom_cfg->m_cache_limit * dec_threshold_size)) {
     return CACHE_INCREASING;
   }
-  do_decrement_step();
   return CACHE_SHRINK_OK;
 }
 
@@ -651,15 +641,9 @@ uint64_t get_xcom_cache_occupation() { return occupation; }
 uint64_t get_xcom_cache_length() { return cache_length; }
 uint64_t get_xcom_cache_size() { return cache_size; }
 
-void set_length_increment(size_t increment) { length_increment = increment; }
-
-void set_size_decrement(size_t decrement) { size_decrement = decrement; }
-
-#if 0
 void set_dec_threshold_length(uint64_t threshold) {
   dec_threshold_length = threshold;
 }
-#endif
 
 void set_min_target_occupation(float threshold) {
   min_target_occupation = threshold;
@@ -671,8 +655,3 @@ void set_min_length_threshold(float threshold) {
   min_length_threshold = threshold;
 }
 /* purecov: end */
-
-void paxos_timeout(pax_machine *p) {
-  (void)p;
-  IFDBG(D_BUG, FN; SYCEXP(p->synode));
-}

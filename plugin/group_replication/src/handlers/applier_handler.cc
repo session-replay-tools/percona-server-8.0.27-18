@@ -106,11 +106,16 @@ int Applier_handler::stop_applier_thread() {
   return error;
 }
 
-int Applier_handler::handle_event(Pipeline_event *event, Continuation *cont) {
+int Applier_handler::handle_event(Pipeline_event *event, Continuation *cont,
+                                  bool io_buffered) {
   DBUG_TRACE;
   int error = 0;
-
   Data_packet *p = nullptr;
+
+  if (is_arbitrator_role()) {
+    goto end;
+  }
+
   error = event->get_Packet(&p);
   DBUG_EXECUTE_IF("applier_handler_force_error_on_pipeline", error = 1;);
   if (error || (p == nullptr)) {
@@ -125,7 +130,8 @@ int Applier_handler::handle_event(Pipeline_event *event, Continuation *cont) {
     performed on the previous handler.
   */
   if (event->get_event_type() != binary_log::TRANSACTION_CONTEXT_EVENT) {
-    error = channel_interface.queue_packet((const char *)p->payload, p->len);
+    error = channel_interface.queue_packet((const char *)p->payload, p->len,
+                                           io_buffered);
 
     if (event->get_event_type() == binary_log::GTID_LOG_EVENT) {
       applier_module->get_pipeline_stats_member_collector()
@@ -137,12 +143,12 @@ end:
   if (error)
     cont->signal(error);
   else
-    next(event, cont);
+    next(event, cont, io_buffered);
 
   return error;
 }
 
-int Applier_handler::handle_action(Pipeline_action *action) {
+int Applier_handler::handle_action(Pipeline_action *action, bool io_buffered) {
   DBUG_TRACE;
   int error = 0;
 
@@ -151,10 +157,14 @@ int Applier_handler::handle_action(Pipeline_action *action) {
 
   switch (action_type) {
     case HANDLER_START_ACTION:
-      error = start_applier_thread();
+      if (!is_arbitrator_role()) {
+        error = start_applier_thread();
+      }
       break;
     case HANDLER_STOP_ACTION:
-      error = stop_applier_thread();
+      if (!is_arbitrator_role()) {
+        error = stop_applier_thread();
+      }
       break;
     case HANDLER_APPLIER_CONF_ACTION: {
       Handler_applier_configuration_action *conf_action =
@@ -177,7 +187,7 @@ int Applier_handler::handle_action(Pipeline_action *action) {
 
   if (error) return error;
 
-  return next(action);
+  return next(action, io_buffered);
 }
 
 bool Applier_handler::is_unique() { return true; }

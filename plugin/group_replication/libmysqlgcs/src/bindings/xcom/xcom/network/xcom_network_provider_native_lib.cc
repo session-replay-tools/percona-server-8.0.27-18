@@ -39,6 +39,8 @@ reserved.
 #endif  // WIN32
 
 #ifndef _WIN32
+#include <arpa/inet.h>
+#include <netdb.h>
 #include <poll.h>
 #endif
 
@@ -120,6 +122,33 @@ result Xcom_network_provider_library::xcom_checked_socket(int domain, int type,
     task_dump_err(ret.funerr);
   }
   return ret;
+}
+
+bool retrieve_addr_from_fd(int fd, bool client, char *ip, int *port) {
+  struct sockaddr_storage server;
+  memset(&server, 0, sizeof(struct sockaddr_storage));
+  socklen_t len = static_cast<socklen_t>(sizeof(struct sockaddr_storage));
+  if (client) {
+    if (xcom_getpeername(fd, (struct sockaddr *)&server, &len)) {
+      return false;
+    }
+  } else {
+    if (getsockname(fd, (struct sockaddr *)&server, &len)) {
+      return false;
+    }
+  }
+
+  if (server.ss_family == AF_INET) {
+    struct sockaddr_in *s = (struct sockaddr_in *)&server;
+    inet_ntop(AF_INET, (void *)&(s->sin_addr), ip, INET_ADDRSTRLEN);
+    *port = ntohs(s->sin_port);
+  } else {
+    struct sockaddr_in6 *s = (struct sockaddr_in6 *)&server;
+    inet_ntop(AF_INET6, (void *)&(s->sin6_addr), ip, INET6_ADDRSTRLEN);
+    *port = ntohs(s->sin6_port);
+  }
+
+  return true;
 }
 
 result Xcom_network_provider_library::create_server_socket() {
@@ -454,7 +483,7 @@ end:
 int Xcom_network_provider_library::timed_connect(int fd,
                                                  struct sockaddr *sock_addr,
                                                  socklen_t sock_size) {
-  return timed_connect_msec(fd, sock_addr, sock_size, 10000);
+  return timed_connect_msec(fd, sock_addr, sock_size, 3000);
 }
 
 /* purecov: begin deadcode */

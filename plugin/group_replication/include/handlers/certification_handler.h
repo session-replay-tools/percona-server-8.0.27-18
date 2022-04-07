@@ -32,8 +32,9 @@ class Certification_handler : public Event_handler {
  public:
   Certification_handler();
   ~Certification_handler() override;
-  int handle_event(Pipeline_event *ev, Continuation *cont) override;
-  int handle_action(Pipeline_action *action) override;
+  int handle_event(Pipeline_event *ev, Continuation *cont,
+                   bool io_buffered) override;
+  int handle_action(Pipeline_action *action, bool io_buffered) override;
   int initialize() override;
   int terminate() override;
   bool is_unique() override;
@@ -70,9 +71,6 @@ class Certification_handler : public Event_handler {
 
   /** All the VC events pending application due to timeout */
   std::list<View_change_stored_info *> pending_view_change_events;
-  /** All the VC events pending application due to consistent transactions */
-  std::list<std::unique_ptr<View_change_stored_info>>
-      pending_view_change_events_waiting_for_consistent_transactions;
 
   /**
     Set transaction context for next event handler.
@@ -116,7 +114,8 @@ class Certification_handler : public Event_handler {
       @retval 0      OK
       @retval !=0    Error
    */
-  int handle_transaction_context(Pipeline_event *pevent, Continuation *cont);
+  int handle_transaction_context(Pipeline_event *pevent, Continuation *cont,
+                                 bool io_buffered);
 
   /**
     This methods handles transaction identifier events, it does two tasks:
@@ -133,14 +132,16 @@ class Certification_handler : public Event_handler {
       @retval 0      OK
       @retval !=0    Error
   */
-  int handle_transaction_id(Pipeline_event *pevent, Continuation *cont);
+  int handle_transaction_id(Pipeline_event *pevent, Continuation *cont,
+                            bool io_buffered);
 
   /*
     This method extracts the certification db and the sequence number from
     the certifier injecting them in a View change event to be sent to a possible
     joiner.
   */
-  int extract_certification_info(Pipeline_event *pevent, Continuation *cont);
+  int extract_certification_info(Pipeline_event *pevent, Continuation *cont,
+                                 bool io_buffered);
 
   /**
     This methods guarantees that the view change event is logged after local

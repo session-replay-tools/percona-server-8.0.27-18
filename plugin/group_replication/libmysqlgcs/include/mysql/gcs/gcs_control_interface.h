@@ -206,6 +206,11 @@ class Gcs_control_interface {
   */
   virtual enum_gcs_error set_xcom_cache_size(uint64_t size) = 0;
 
+  /**
+    Sets a new value for the xcom flp timeout of the XCom communication.
+  */
+  virtual enum_gcs_error set_xcom_flp_timeout(uint64_t timeout) = 0;
+
   virtual ~Gcs_control_interface() = default;
 };
 

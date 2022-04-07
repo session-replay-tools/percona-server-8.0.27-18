@@ -46,13 +46,10 @@
 #include "plugin/group_replication/libmysqlgcs/src/bindings/xcom/xcom/site_struct.h"
 #include "plugin/group_replication/libmysqlgcs/src/bindings/xcom/xcom/sock_probe.h"
 #include "plugin/group_replication/libmysqlgcs/src/bindings/xcom/xcom/synode_no.h"
-#include "xdr_gen/xcom_vp.h"
 
 using std::map;
 using std::string;
 using std::vector;
-
-extern uint32_t get_my_xcom_id();
 
 Gcs_interface *Gcs_xcom_interface::interface_reference_singleton = nullptr;
 
@@ -98,36 +95,6 @@ bool Gcs_xcom_config::same_event_horizon(
   return (event_horizon == event_horizon_);
 }
 
-bool Gcs_xcom_config::same_xcom_nodes_v3(
-    Gcs_xcom_nodes const &xcom_nodes) const {
-  bool are_same_nodes = (xcom_nodes.get_size() == xcom_nodes_.get_size());
-  if (are_same_nodes) {
-    for (auto const &node : xcom_nodes.get_nodes()) {
-      Gcs_xcom_node_information const *existing_node =
-          xcom_nodes_.get_node(node.get_member_id());
-      /* Take UUID into account to distinguish between reincarnations of the
-         same node. */
-      bool const node_already_existed =
-          (existing_node != nullptr &&
-           existing_node->get_member_uuid().actual_value ==
-               node.get_member_uuid().actual_value);
-      are_same_nodes = are_same_nodes && node_already_existed;
-    }
-  }
-  MYSQL_GCS_TRACE_EXECUTE(
-      MYSQL_GCS_LOG_TRACE(
-          "Received global view: previous node set: (same_xcom_nodes=%d)",
-          are_same_nodes);
-      for (auto const &node
-           : xcom_nodes.get_nodes()) {
-        MYSQL_GCS_LOG_TRACE("My node_id is %d peer_ %d address: %s flag: %s",
-                            xcom_nodes.get_node_no(), node.get_node_no(),
-                            node.get_member_id().get_member_id().c_str(),
-                            node.is_alive() ? "Active" : "Failed");
-      });
-  return are_same_nodes;
-}
-
 static Gcs_xcom_config last_accepted_xcom_config;
 
 int xcom_local_port = 0;
@@ -142,12 +109,10 @@ static Gcs_xcom_proxy *s_xcom_proxy;
 */
 static Gcs_xcom_engine *gcs_engine;
 
-void cb_xcom_receive_data(synode_no message_id, synode_no origin,
-                          site_def const *site, node_set nodes, u_int size,
+void cb_xcom_receive_data(synode_no message_id, node_set nodes, u_int size,
                           synode_no last_removed, char *data);
-void do_cb_xcom_receive_data(synode_no message_id, synode_no origin,
-                             Gcs_xcom_nodes *xcom_nodes, synode_no last_removed,
-                             u_int size, char *data);
+void do_cb_xcom_receive_data(synode_no message_id, Gcs_xcom_nodes *xcom_nodes,
+                             synode_no last_removed, u_int size, char *data);
 void cb_xcom_receive_local_view(synode_no config_id, node_set nodes);
 void do_cb_xcom_receive_local_view(synode_no config_id,
                                    Gcs_xcom_nodes *xcom_nodes,
@@ -244,7 +209,7 @@ enum_gcs_error Gcs_xcom_interface::initialize_logging(
         new Gcs_async_buffer(new Gcs_file_sink(*debug_file, *debug_path));
   else
 #endif /* XCOM_STANDALONE */
-    /* purecov: begin inspected */
+       /* purecov: begin inspected */
     m_default_sink = new Gcs_async_buffer(new Gcs_output_sink());
   /* purecov: end */
 
@@ -505,11 +470,17 @@ enum_gcs_error Gcs_xcom_interface::configure(
     return GCS_NOK;
   }
 
+  bool find_group = false;
+  m_group_interface_lock.rdlock();
   // Try and retrieve already instantiated group interfaces for a certain group
   registered_group = m_group_interfaces.find(*group_name_str);
+  if (registered_group != m_group_interfaces.end()) {
+    find_group = true;
+  }
+  m_group_interface_lock.unlock();
 
   // Error! Group interface does not exist
-  if (registered_group == m_group_interfaces.end()) {
+  if (!find_group) {
     MYSQL_GCS_LOG_ERROR("Group interface does not exist for group "
                         << group_name_str->c_str())
     error = GCS_NOK;
@@ -737,17 +708,29 @@ gcs_xcom_group_interfaces *Gcs_xcom_interface::get_group_interfaces(
     const Gcs_group_identifier &group_identifier) {
   if (!is_initialized()) return nullptr;
 
-  // Try and retrieve already instantiated group interfaces for a certain
-  // group
+  bool find_group = false;
+  // Try and retrieve already instantiated group interfaces for a certain group
+  m_group_interface_lock.rdlock();
   map<std::string, gcs_xcom_group_interfaces *>::const_iterator
       registered_group;
   registered_group = m_group_interfaces.find(group_identifier.get_group_id());
+  if (registered_group != m_group_interfaces.end()) {
+    find_group = true;
+  }
+  m_group_interface_lock.unlock();
 
   gcs_xcom_group_interfaces *group_interface = nullptr;
-  if (registered_group == m_group_interfaces.end()) {
+  if (!find_group) {
     /*
       Retrieve some initialization parameters.
     */
+    m_group_interface_lock.wrlock();
+    registered_group = m_group_interfaces.find(group_identifier.get_group_id());
+    if (registered_group != m_group_interfaces.end()) {
+      m_group_interface_lock.unlock();
+      return registered_group->second;
+    }
+
     const std::string *join_attempts_str =
         m_initialization_parameters.get_parameter("join_attempts");
     const std::string *join_sleep_time_str =
@@ -803,6 +786,7 @@ gcs_xcom_group_interfaces *Gcs_xcom_interface::get_group_interfaces(
     // Store the created objects for later deletion
     group_interface->vce = vce;
     group_interface->se = se;
+    m_group_interface_lock.unlock();
 
     configure_message_stages(group_identifier);
   } else {
@@ -841,6 +825,7 @@ enum_gcs_error Gcs_xcom_interface::cleanup_runtime_resources(
 }
 
 void Gcs_xcom_interface::clean_group_interfaces() {
+  m_group_interface_lock.wrlock();
   map<string, gcs_xcom_group_interfaces *>::iterator group_if;
   for (group_if = m_group_interfaces.begin();
        group_if != m_group_interfaces.end(); group_if++) {
@@ -856,6 +841,7 @@ void Gcs_xcom_interface::clean_group_interfaces() {
   }
 
   m_group_interfaces.clear();
+  m_group_interface_lock.unlock();
 }
 
 void Gcs_xcom_interface::clean_group_references() {
@@ -936,6 +922,8 @@ bool Gcs_xcom_interface::initialize_xcom(
       interface_params.get_parameter("xcom_cache_size");
   const std::string *comm_stack_str =
       interface_params.get_parameter("communication_stack");
+  const std::string *xcom_flp_timeout_str =
+      interface_params.get_parameter("xcom_flp_timeout");
 
   set_xcom_group_information(*group_name);
 
@@ -965,6 +953,14 @@ bool Gcs_xcom_interface::initialize_xcom(
         (uint64_t)atoll(xcom_cache_size_str->c_str()));
     MYSQL_GCS_LOG_DEBUG("Configured XCom cache size: %s",
                         xcom_cache_size_str->c_str());
+  }
+
+  // configure flp timeout
+  if (xcom_flp_timeout_str != nullptr) {
+    m_gcs_xcom_app_cfg.set_xcom_flp_timeout(
+        (uint64_t)atoll(xcom_flp_timeout_str->c_str()));
+    MYSQL_GCS_LOG_DEBUG("Configured XCom flp timeout: %s",
+                        xcom_flp_timeout_str->c_str());
   }
 
   // configure allowlist
@@ -1255,8 +1251,6 @@ enum_gcs_error Gcs_xcom_interface::configure_message_stages(
   pipeline.register_stage<Gcs_message_stage_lz4>(compression_enabled, compression_threshold);
   pipeline.register_stage<Gcs_message_stage_lz4_v2>(compression_enabled, compression_threshold);
   pipeline.register_stage<Gcs_message_stage_split_v2>(fragmentation_enabled, fragmentation_threshold);
-  pipeline.register_stage<Gcs_message_stage_lz4_v3>(compression_enabled, compression_threshold);
-  pipeline.register_stage<Gcs_message_stage_split_v3>(fragmentation_enabled, fragmentation_threshold);
 
   error = pipeline.register_pipeline({
     {
@@ -1270,13 +1264,6 @@ enum_gcs_error Gcs_xcom_interface::configure_message_stages(
       {
         Stage_code::ST_LZ4_V2,
         Stage_code::ST_SPLIT_V2
-      }
-    },
-    {
-      Gcs_protocol_version::V3,
-      {
-        Stage_code::ST_LZ4_V3,
-        Stage_code::ST_SPLIT_V3
       }
     }
   });
@@ -1334,10 +1321,18 @@ Gcs_ip_allowlist &Gcs_xcom_interface::get_ip_allowlist() {
   return m_ip_allowlist;
 }
 
-void cb_xcom_receive_data(synode_no message_id, synode_no origin,
-                          site_def const *site, node_set nodes, u_int size,
+void Gcs_xcom_interface::update_zone_id_for_xcom_node(const char *ip,
+                                                      int zone_id,
+                                                      bool zone_id_sync_mode) {
+  Gcs_xcom_utils::update_zone_id_for_paxos_node(ip, zone_id, zone_id_sync_mode);
+}
+
+void cb_xcom_receive_data(synode_no message_id, node_set nodes, u_int size,
                           synode_no last_removed, char *data) {
+  const site_def *site = find_site_def(message_id);
+
   if (site->nodeno == VOID_NODE_NO) {
+    MYSQL_GCS_LOG_INFO("cb_xcom_receive_data:nodeno is VOID_NODE_NO");
     free_node_set(&nodes);
     free(data);
     return;
@@ -1348,20 +1343,17 @@ void cb_xcom_receive_data(synode_no message_id, synode_no origin,
   free_node_set(&nodes);
 
   Gcs_xcom_notification *notification =
-      new Data_notification(do_cb_xcom_receive_data, message_id, origin,
-                            xcom_nodes, last_removed, size, data);
+      new Data_notification(do_cb_xcom_receive_data, message_id, xcom_nodes,
+                            last_removed, size, data);
   bool scheduled = gcs_engine->push(notification);
   if (!scheduled) {
     MYSQL_GCS_LOG_DEBUG(
-        "xcom_id %x Tried to enqueue a message but the member is about to "
-        "stop.",
-        get_my_xcom_id())
+        "Tried to enqueue a message but the member is about to stop.")
     free(data);
     delete xcom_nodes;
     delete notification;
   } else {
-    MYSQL_GCS_LOG_TRACE("xcom_id %x Scheduled message notification: %p",
-                        get_my_xcom_id(), notification)
+    MYSQL_GCS_LOG_TRACE("Scheduled message notification: %p", notification)
   }
 }
 
@@ -1389,7 +1381,7 @@ static inline void do_cb_xcom_receive_data_user(
                                               std::move(xcom_nodes));
 }
 
-void do_cb_xcom_receive_data(synode_no message_id, synode_no origin,
+void do_cb_xcom_receive_data(synode_no message_id,
                              Gcs_xcom_nodes *xcom_nodes_raw_ptr,
                              synode_no cache_last_removed, u_int size,
                              char *data_raw_ptr) {
@@ -1423,7 +1415,7 @@ void do_cb_xcom_receive_data(synode_no message_id, synode_no origin,
     down so the message will be simply discarded.
   */
   if (!xcom_control->is_xcom_running()) {
-    MYSQL_GCS_LOG_DEBUG(
+    MYSQL_GCS_LOG_INFO(
         "Rejecting this message. The group communication engine has already "
         "stopped.")
     return;
@@ -1454,16 +1446,15 @@ void do_cb_xcom_receive_data(synode_no message_id, synode_no origin,
   bool const received_initial_global_view =
       last_accepted_xcom_config.has_view();
   if (!received_initial_global_view) {
-    MYSQL_GCS_LOG_DEBUG(
+    MYSQL_GCS_LOG_INFO(
         "Rejecting this message. The member is not in a view yet.")
     return;
   }
 
   MYSQL_GCS_LOG_TRACE(
-      "xcom_id %x xcom_receive_data_internal:: xcom_receive_data My node_id is "
-      "%d "
+      "xcom_receive_data_internal:: xcom_receive_data My node_id is %d "
       "message_id.group= %u message_id.msgno= %llu message_id.node= %d",
-      get_my_xcom_id(), xcom_nodes->get_node_no(), message_id.group_id,
+      xcom_nodes->get_node_no(), message_id.group_id,
       static_cast<long long unsigned>(message_id.msgno), message_id.node);
 
   Gcs_xcom_communication *xcom_communication =
@@ -1471,12 +1462,14 @@ void do_cb_xcom_receive_data(synode_no message_id, synode_no origin,
           intf->get_communication_session(*destination));
   assert(xcom_communication != nullptr);
 
-  auto packet = Gcs_packet::make_incoming_packet(
-      std::move(data), size, message_id, origin,
-      xcom_communication->get_msg_pipeline());
+  auto packet =
+      Gcs_packet::make_incoming_packet(std::move(data), size, message_id,
+                                       xcom_communication->get_msg_pipeline());
 
   switch (packet.get_cargo_type()) {
     case Cargo_type::CT_INTERNAL_STATE_EXCHANGE:
+      MYSQL_GCS_LOG_INFO(
+          "Do receive CT_INTERNAL_STATE_EXCHANGE message from xcom");
       ::do_cb_xcom_receive_data_state_exchange(
           std::move(packet), std::move(xcom_nodes), *xcom_communication,
           *xcom_control);
@@ -1492,71 +1485,6 @@ void do_cb_xcom_receive_data(synode_no message_id, synode_no origin,
   }
 }
 
-static bool must_filter_xcom_view_v1(synode_no config_id,
-                                     Gcs_xcom_nodes const &xcom_nodes,
-                                     xcom_event_horizon event_horizon) {
-  bool const already_processed =
-      (last_accepted_xcom_config.has_view() &&
-       last_accepted_xcom_config.same_view(config_id));
-  bool const same_xcom_nodes =
-      last_accepted_xcom_config.same_xcom_nodes(xcom_nodes);
-  bool const different_event_horizons =
-      !last_accepted_xcom_config.same_event_horizon(event_horizon);
-  bool const event_horizon_reconfiguration =
-      (same_xcom_nodes && different_event_horizons);
-
-  bool filter_xcom_view = already_processed || event_horizon_reconfiguration;
-
-  MYSQL_GCS_TRACE_EXECUTE(if (filter_xcom_view) {
-    if (filter_xcom_view) {
-      MYSQL_GCS_LOG_TRACE(
-          "Received a global view we already processed: { group=%" PRIu32
-          " msgno=%" PRIu64 " node=%" PRIu32 " }",
-          config_id.group_id, config_id.msgno, config_id.node);
-    } else {
-      MYSQL_GCS_LOG_TRACE(
-          "Received a global view due to an event horizon reconfiguration: { "
-          "same_xcom_nodes=%d different_event_horizons=%d }",
-          same_xcom_nodes, different_event_horizons);
-    }
-  });
-
-  return filter_xcom_view;
-}
-
-static bool must_filter_xcom_view_v3(Gcs_xcom_nodes const &xcom_nodes) {
-  bool filter_xcom_view =
-      last_accepted_xcom_config.same_xcom_nodes_v3(xcom_nodes);
-
-  MYSQL_GCS_TRACE_EXECUTE(if (filter_xcom_view) {
-    MYSQL_GCS_LOG_TRACE(
-        "Received a global view with no membership changes: { "
-        "filter_xcom_view=%d }",
-        filter_xcom_view);
-  });
-
-  return filter_xcom_view;
-}
-
-static bool must_filter_xcom_view(synode_no config_id,
-                                  Gcs_xcom_nodes const &xcom_nodes,
-                                  xcom_event_horizon event_horizon,
-                                  Gcs_protocol_version protocol) {
-  switch (protocol) {
-    case Gcs_protocol_version::V1:
-    case Gcs_protocol_version::V2:
-      return must_filter_xcom_view_v1(config_id, xcom_nodes, event_horizon);
-    case Gcs_protocol_version::HIGHEST_KNOWN:
-      return must_filter_xcom_view_v3(xcom_nodes);
-    case Gcs_protocol_version::UNKNOWN:
-    case Gcs_protocol_version::V4:
-    case Gcs_protocol_version::V5:
-      assert(false && "supposedly unreachable code");
-  }
-  assert(false && "supposedly unreachable code");
-  return true;
-}
-
 void cb_xcom_receive_global_view(synode_no config_id, synode_no message_id,
                                  node_set nodes,
                                  xcom_event_horizon event_horizon) {
@@ -1565,7 +1493,7 @@ void cb_xcom_receive_global_view(synode_no config_id, synode_no message_id,
 
   if (site->nodeno == VOID_NODE_NO) {
     free_node_set(&nodes);
-    MYSQL_GCS_LOG_DEBUG("Rejecting this view. Invalid site definition.");
+    MYSQL_GCS_LOG_INFO("Rejecting this view. Invalid site definition.");
     return;
   }
 
@@ -1578,7 +1506,7 @@ void cb_xcom_receive_global_view(synode_no config_id, synode_no message_id,
       event_horizon, max_synode);
   bool scheduled = gcs_engine->push(notification);
   if (!scheduled) {
-    MYSQL_GCS_LOG_DEBUG(
+    MYSQL_GCS_LOG_INFO(
         "Tried to enqueue a global view but the member is about to stop.")
     delete xcom_nodes;
     delete notification;
@@ -1625,21 +1553,20 @@ void do_cb_xcom_receive_global_view(synode_no config_id, synode_no message_id,
           xcom_nodes->get_nodes();
       std::vector<Gcs_xcom_node_information>::const_iterator nodes_it;
       MYSQL_GCS_LOG_TRACE(
-          "xcom_id %x Received global view: My node_id is %d "
+          "Received global view: My node_id is %d "
           "config_id.group= %u config_id.msgno= %llu config_id.node=%d "
           "message_id.group= %u message_id.msgno= %llu message_id.node= %d",
-          get_my_xcom_id(), node_no, config_id.group_id,
+          node_no, config_id.group_id,
           static_cast<long long unsigned>(config_id.msgno), config_id.node,
           message_id.group_id,
           static_cast<long long unsigned>(message_id.msgno), message_id.node)
 
-          MYSQL_GCS_LOG_TRACE("xcom_id %x Received global view: node set:",
-                              get_my_xcom_id())
+          MYSQL_GCS_LOG_TRACE("Received global view: node set:")
 
               for (nodes_it = nodes.begin(); nodes_it != nodes.end();
                    ++nodes_it){MYSQL_GCS_LOG_TRACE(
-                  "xcom_id %x My node_id is %d peer_ %d address: %s flag: %s",
-                  get_my_xcom_id(), node_no, (*nodes_it).get_node_no(),
+                  "My node_id is %d peer_ %d address: %s flag: %s", node_no,
+                  (*nodes_it).get_node_no(),
                   (*nodes_it).get_member_id().get_member_id().c_str(),
                   ((*nodes_it).is_alive() ? "Active" : "Failed"))})
 
@@ -1656,49 +1583,50 @@ void do_cb_xcom_receive_global_view(synode_no config_id, synode_no message_id,
     must be called because it is responsible for removing from the system
     those members that are faulty.
 
-    do_not_deliver_to_client = true prevents
-    control_if->xcom_receive_global_view(message_id, xcom_nodes,
-                                         do_not_deliver_to_client)
+    same_view = true prevents
+    control_if->xcom_receive_global_view(message_id, xcom_nodes, same_view)
     from firing a new view upwards.
-    The logic to filter out a view depends on the GCS protocol version:
-
-    GCS PROTOCOL <= V2
-    ------------------
     We want to filter out a view if:
-      a) we have already processed it, or
-      b) it is due to an event horizon reconfiguration.
+
+    a) we have already processed it, or
+    b) it is due to an event horizon reconfiguration.
 
     We identify situation (a) by comparing the incoming XCom view's config
     synod against the config synod of the last XCom view scheduled for
-    delivery. We conclude we're in situation (b) if the incoming XCom view's
-    membership is the same as the last XCom view scheduled for delivery *and*
-    their event horizons are different.
-
-    This approach is, unfortunately, insufficient. If we reconfigure the XCom's
-    event horizon to the same value it currently has, we get an XCom view where
-    the membership is the same as the last XCom view scheduled for delivery
-    *but* their event horizons are the same. We do not filter such a view, but
-    we want to. The next GCS protocol version fixes this.
-
-    GCS PROTOCOL >= V3
-    ------------------
-    We want to filter out a view if the view is *not* about a membership change.
-    In other words, we only want to let a view bubble upwards if it's about a
-    new member joining, or an existing member leaving.
-    So we filter an incoming XCom view if the incoming XCom view's membership is
-    the same as the last XCom view scheduled for delivery.
+    delivery. We identify situation (b) if the incoming XCom view's membership
+    is the same as the last XCom view scheduled for delivery *and* their event
+    horizons are different.
   */
-  auto *xcom_communication_if = static_cast<Gcs_xcom_communication *>(
-      intf->get_communication_session(*destination));
-  Gcs_protocol_version const protocol =
-      xcom_communication_if->get_protocol_version();
+  // Situation (a).
+  bool const already_processed =
+      (last_accepted_xcom_config.has_view() &&
+       last_accepted_xcom_config.same_view(config_id));
+  // Situation (b).
+  bool const same_xcom_nodes =
+      last_accepted_xcom_config.same_xcom_nodes(*xcom_nodes);
+  bool const different_event_horizons =
+      !last_accepted_xcom_config.same_event_horizon(event_horizon);
+  bool const event_horizon_reconfiguration =
+      (same_xcom_nodes && different_event_horizons);
 
-  bool do_not_deliver_to_client =
-      must_filter_xcom_view(config_id, *xcom_nodes, event_horizon, protocol);
+  bool const same_view = already_processed || event_horizon_reconfiguration;
+
+  MYSQL_GCS_TRACE_EXECUTE(if (same_view) {
+    if (already_processed) {
+      MYSQL_GCS_LOG_TRACE(
+          "Received a global view we already processed: { group=%" PRIu32
+          " msgno=%" PRIu64 " node=%" PRIu32 " }",
+          config_id.group_id, config_id.msgno, config_id.node);
+    } else {
+      MYSQL_GCS_LOG_TRACE(
+          "Received a global view due to an event horizon reconfiguration: { "
+          "same_xcom_nodes=%d different_event_horizons=%d }",
+          same_xcom_nodes, different_event_horizons);
+    }
+  });
 
   if (!(xcom_control_if->xcom_receive_global_view(
-          config_id, message_id, xcom_nodes, do_not_deliver_to_client,
-          max_synode))) {
+          config_id, message_id, xcom_nodes, same_view, max_synode))) {
     // Copy node set and config id if the view is not rejected...
     last_accepted_xcom_config.update(config_id, *xcom_nodes, event_horizon);
   } else {

@@ -88,10 +88,9 @@ SET @@GLOBAL.group_replication_communication_max_message_size= default;
 --let $saved_gr_advertise_recovery_endpoints = `SELECT @@GLOBAL.group_replication_advertise_recovery_endpoints;`
 --let $saved_gr_view_change_uuid = `SELECT @@GLOBAL.group_replication_view_change_uuid;`
 --let $saved_gr_communication_stack = `SELECT @@GLOBAL.group_replication_communication_stack;`
---let $saved_gr_paxos_single_leader = `SELECT @@GLOBAL.group_replication_paxos_single_leader;`
 
 # Total number of GR variables.
---let $total_gr_vars= 61
+--let $total_gr_vars= 71
 
 --echo #
 --echo # Test Unit#1
@@ -161,7 +160,6 @@ SET @@GLOBAL.group_replication_recovery_tls_ciphersuites= default;
 SET @@GLOBAL.group_replication_advertise_recovery_endpoints = default;
 SET @@GLOBAL.group_replication_view_change_uuid= default;
 SET @@GLOBAL.group_replication_communication_stack = default;
-SET @@GLOBAL.group_replication_paxos_single_leader = default;
 
 # Session variables
 SET @@SESSION.group_replication_consistency= default;
@@ -341,8 +339,8 @@ SET @@SESSION.group_replication_consistency= default;
 --source include/assert.inc
 
 # group_replication_communication_max_message_size
---let $assert_text= Default group_replication_communication_max_message_size is 10485760
---let $assert_cond= "[SELECT @@GLOBAL.group_replication_communication_max_message_size]" = 10485760
+--let $assert_text= Default group_replication_communication_max_message_size is 1048576
+--let $assert_cond= "[SELECT @@GLOBAL.group_replication_communication_max_message_size]" = 1048576
 --source include/assert.inc
 
 #group_replication_autorejoin_tries
@@ -389,11 +387,6 @@ SET @@SESSION.group_replication_consistency= default;
 # group_replication_communication_stack
 --let $assert_text= Default group_replication_communication_stack is XCom
 --let $assert_cond= "[SELECT @@GLOBAL.group_replication_communication_stack]" = "XCom"
---source include/assert.inc
-
-# group_replication_paxos_single_leader
---let $assert_text= Default group_replication_paxos_single_leader is 0
---let $assert_cond= "[SELECT @@GLOBAL.group_replication_paxos_single_leader]" = 0
 --source include/assert.inc
 
 
@@ -452,7 +445,6 @@ SET @@SESSION.group_replication_consistency= default;
 --eval SET @@GLOBAL.group_replication_advertise_recovery_endpoints= "$saved_gr_advertise_recovery_endpoints"
 --eval SET @@GLOBAL.group_replication_view_change_uuid= "$saved_gr_view_change_uuid"
 --eval SET @@GLOBAL.group_replication_communication_stack= "$saved_gr_communication_stack"
---eval SET @@GLOBAL.group_replication_paxos_single_leader= $saved_gr_paxos_single_leader
 --enable_query_log
 
 --let $total_gr_vars=

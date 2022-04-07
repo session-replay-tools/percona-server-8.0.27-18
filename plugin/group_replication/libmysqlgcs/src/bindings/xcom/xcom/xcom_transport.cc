@@ -52,6 +52,7 @@
 #include "xcom/task_os.h"
 #include "xcom/x_platform.h"
 #include "xcom/xcom_base.h"
+#include "xcom/xcom_cfg.h"
 #include "xcom/xcom_common.h"
 #include "xcom/xcom_detector.h"
 #include "xcom/xcom_memory.h"
@@ -74,7 +75,7 @@
 
 #endif
 
-#define MY_XCOM_PROTO x_1_9
+#define MY_XCOM_PROTO x_1_8
 
 xcom_proto const my_min_xcom_version =
     x_1_0; /* The minimum protocol version I am able to understand */
@@ -84,6 +85,7 @@ xcom_proto const my_xcom_version =
 /* #define XCOM_ECM */
 
 #define SERVER_MAX (2 * NSERVERS)
+#define LARGE_TRANS_THRESHOLD 1048576
 
 /* Turn Nagle's algorithm on or off */
 static int const NAGLE = 0;
@@ -202,18 +204,19 @@ int flush_srv_buf(server *s, int64_t *ret) {
   u_int buflen;
   END_ENV;
 
-  int64_t sent{0};
   TASK_BEGIN
   ep->buflen = s->out_buf.n;
   reset_srv_buf(&s->out_buf);
   if (s->con->fd >= 0) {
     if (ep->buflen) {
+      int64_t sent;
       IFDBG(D_TRANSPORT, FN; PTREXP(stack); NDBG(ep->buflen, u));
       /* LOCK_FD(s->con.fd, 'w'); */
       TASK_CALL(task_write(s->con, s->out_buf.buf, ep->buflen, &sent));
       /* UNLOCK_FD(s->fd, 'w'); */
       if (sent <= 0) {
         shutdown_connection(s->con);
+        s->unreachable = DIRECT_ABORT_CONN;
       }
       TASK_RETURN(sent);
     }
@@ -295,7 +298,6 @@ static int _send_msg(server *s, pax_msg *p, node_no to, int64_t *ret) {
   char *buf;
   END_ENV;
 
-  int64_t sent{0};
   TASK_BEGIN
   p->to = to;
   IFDBG(D_NONE, FN; PTREXP(stack); PTREXP(s); PTREXP(p); NDBG(s->con.fd, d));
@@ -312,6 +314,7 @@ static int _send_msg(server *s, pax_msg *p, node_no to, int64_t *ret) {
       serialize_msg(p, s->con->x_proto, &ep->buflen, &ep->buf);
       IFDBG(D_TRANSPORT, FN; NDBG(ep->buflen, u));
       if (ep->buflen) {
+        int64_t sent;
         /* Not enough space? Flush the buffer */
         if (ep->buflen > srv_buf_free_space(&s->out_buf)) {
           TASK_CALL(flush_srv_buf(s, ret));
@@ -321,6 +324,9 @@ static int _send_msg(server *s, pax_msg *p, node_no to, int64_t *ret) {
           /* Still not enough? Message must be huge, send without buffering */
           if (ep->buflen > srv_buf_free_space(&s->out_buf)) {
             IFDBG(D_TRANSPORT, FN; STRLIT("task_write "); NDBG(ep->buflen, u));
+            if (ep->buflen >= LARGE_TRANS_THRESHOLD) {
+              s->large_transfer_detected = task_now();
+            }
             TASK_CALL(task_write(s->con, ep->buf, ep->buflen, &sent));
             if (s->con->fd < 0) {
               TASK_FAIL;
@@ -345,6 +351,7 @@ static int _send_msg(server *s, pax_msg *p, node_no to, int64_t *ret) {
         /* UNLOCK_FD(s->con.fd, 'w'); */
         if (sent <= 0) {
           shutdown_connection(s->con);
+          s->unreachable = DIRECT_ABORT_CONN;
         }
         TASK_RETURN(sent);
       }
@@ -380,20 +387,24 @@ int send_proto(connection_descriptor *con, xcom_proto x_proto,
   char buf[MSG_HDR_SIZE];
   END_ENV;
 
-  int64_t sent{0};
   TASK_BEGIN
   if (con->fd >= 0) {
     con->snd_tag = tag;
     write_protoversion(VERS_PTR((unsigned char *)ep->buf), x_proto);
     put_header_1_0((unsigned char *)ep->buf, 0, x_type, tag);
-    TASK_CALL(task_write(con, ep->buf, MSG_HDR_SIZE, &sent));
-    if (con->fd < 0) {
-      TASK_FAIL;
+
+    {
+      int64_t sent;
+
+      TASK_CALL(task_write(con, ep->buf, MSG_HDR_SIZE, &sent));
+      if (con->fd < 0) {
+        TASK_FAIL;
+      }
+      if (sent <= 0) {
+        shutdown_connection(con);
+      }
+      TASK_RETURN(sent);
     }
-    if (sent <= 0) {
-      shutdown_connection(con);
-    }
-    TASK_RETURN(sent);
   } else {
     TASK_FAIL;
   }
@@ -432,8 +443,8 @@ int apply_xdr(void *buff, uint32_t bufflen, xdrproc_t xdrfunc, void *xdrdata,
   */
   if (xdr.x_ops) {
     s = XDRFUNC(&xdr, xdrdata);
-    xdr_destroy(&xdr);
   }
+  xdr_destroy(&xdr);
   return s;
 }
 
@@ -484,7 +495,7 @@ static int serialize(void *p, xcom_proto x_proto, uint32_t *out_len,
     Allocate space for version number, length field, type, tag, and serialized
     message. Explicit type case suppress the warnings on 32bits.
   */
-  buf = (unsigned char *)xcom_calloc((size_t)1, (size_t)tot_buflen);
+  buf = (unsigned char *)calloc((size_t)1, (size_t)tot_buflen);
   if (buf) {
     /* Write protocol version */
     write_protoversion(buf, x_proto);
@@ -511,6 +522,17 @@ static inline int old_proto_knows(xcom_proto x_proto [[maybe_unused]],
   return 1;
 }
 
+/* must match enum x_proto */
+extern "C" bool_t xdr_pax_msg_1_0(XDR *, pax_msg *);
+extern "C" bool_t xdr_pax_msg_1_1(XDR *, pax_msg *);
+extern "C" bool_t xdr_pax_msg_1_2(XDR *, pax_msg *);
+extern "C" bool_t xdr_pax_msg_1_3(XDR *, pax_msg *);
+extern "C" bool_t xdr_pax_msg_1_4(XDR *, pax_msg *);
+extern "C" bool_t xdr_pax_msg_1_5(XDR *, pax_msg *);
+extern "C" bool_t xdr_pax_msg_1_6(XDR *, pax_msg *);
+extern "C" bool_t xdr_pax_msg_1_7(XDR *, pax_msg *);
+extern "C" bool_t xdr_pax_msg_1_8(XDR *, pax_msg *);
+
 static xdrproc_t pax_msg_func[] = {
     reinterpret_cast<xdrproc_t>(0),
     reinterpret_cast<xdrproc_t>(xdr_pax_msg_1_0),
@@ -521,8 +543,7 @@ static xdrproc_t pax_msg_func[] = {
     reinterpret_cast<xdrproc_t>(xdr_pax_msg_1_5),
     reinterpret_cast<xdrproc_t>(xdr_pax_msg_1_6),
     reinterpret_cast<xdrproc_t>(xdr_pax_msg_1_7),
-    reinterpret_cast<xdrproc_t>(xdr_pax_msg_1_8),
-    reinterpret_cast<xdrproc_t>(xdr_pax_msg_1_9)};
+    reinterpret_cast<xdrproc_t>(xdr_pax_msg_1_8)};
 
 int serialize_msg(pax_msg *p, xcom_proto x_proto, uint32_t *buflen,
                   char **buf) {
@@ -574,7 +595,7 @@ static int maxservers = 0;
 static server *mksrv(char *srv, xcom_port port) {
   server *s;
 
-  s = (server *)xcom_calloc((size_t)1, sizeof(*s));
+  s = (server *)calloc((size_t)1, sizeof(*s));
 
   IFDBG(D_NONE, FN; PTREXP(s); STREXP(srv));
   if (s == 0) {
@@ -586,9 +607,13 @@ static server *mksrv(char *srv, xcom_port port) {
   s->refcnt = 0;
   s->srv = srv;
   s->port = port;
+  s->zone_id = 0;
+  s->zone_id_sync_mode = true;
   s->con = new_connection(-1, nullptr);
   s->active = 0.0;
   s->detected = 0.0;
+  s->large_transfer_detected = task_now();
+  s->unreachable = 0;
   s->last_ping_received = 0.0;
   s->number_of_pings_received = 0;
 #if defined(_WIN32)
@@ -777,43 +802,90 @@ int incoming_connection_task(task_arg arg [[maybe_unused]]) {
   TASK_END;
 }
 
-void server_detected(server *s) { s->detected = task_now(); }
+void server_detected(server *s) {
+  if (!s->unreachable) {
+    s->detected = task_now();
+  }
+}
+
+bool check_tcp_connection_valid(int fd, int *same_ip) {
+  char client_addr[INET6_ADDRSTRLEN];
+  char server_addr[INET6_ADDRSTRLEN];
+  int client_port, server_port;
+
+  bool result = true;
+
+  *same_ip = 0;
+  /* Get client address */
+  if (!retrieve_addr_from_fd(fd, true, client_addr, &client_port)) {
+    result = false;
+  } else {
+    /* Get server address */
+    if (!retrieve_addr_from_fd(fd, false, server_addr, &server_port)) {
+      result = false;
+    } else {
+      /* Compare IP and port */
+      if (strcmp(client_addr, server_addr) == 0) {
+        if (client_port == server_port) {
+          /* Avoid self connect */
+          result = false;
+        } else {
+          *same_ip = 1;
+        }
+      }
+    }
+  }
+
+  return result;
+}
+
+static double getusec() {
+  struct timeval tp;
+  gettimeofday(&tp, NULL);
+  double sec = tp.tv_sec * 1000000 + (1.0 * tp.tv_usec);
+  return sec;
+}
 
 /* Try to connect to another node */
 static int dial(server *s) {
   DECL_ENV
   int dummy;
+  int same_ip;
+  double utime;
   END_ENV;
 
   TASK_BEGIN
-  IFDBG(D_BUG, FN; STRLIT(" dial "); NPUT(get_nodeno(get_site_def()), u);
+  IFDBG(D_NONE, FN; STRLIT(" dial "); NPUT(get_nodeno(get_site_def()), u);
         STRLIT(s->srv); NDBG(s->port, u));
 
   // Delete old connection
   reset_connection(s->con);
+  G_INFO("dial for server:%s, port:%d", s->srv, (int)s->port);
+  ep->utime = getusec();
   X_FREE(s->con);
   s->con = nullptr;
 
-  s->con = open_new_connection(s->srv, s->port, 1000);
+  s->con = open_new_connection(s->srv, s->port, 3000);
   if (!s->con) {
     s->con = new_connection(-1, nullptr);
   }
 
+  s->conn_rtt = (getusec() - ep->utime) / 1000000;
   if (s->con->fd < 0) {
     IFDBG(D_NONE, FN; STRLIT("could not dial "); STRLIT(s->srv);
           NDBG(s->port, u););
+  } else if (!check_tcp_connection_valid(s->con->fd, &ep->same_ip)) {
+    xcom_shut_close_socket(&(s->con->fd));
   } else {
     if (NAGLE == 0) {
       set_nodelay(s->con->fd);
     }
 
     unblock_fd(s->con->fd);
-    IFDBG(D_BUG, FN; STRLIT(" dial connected ");
-          NPUT(get_nodeno(get_site_def()), u); STRLIT(s->srv);
-          NDBG(s->port, u));
     set_connected(s->con, CON_FD);
+    G_INFO("set connection CON_FD in dial for fd:%d", s->con->fd);
     alive(s);
-    update_detected(get_site_def_rw());
+    update_detected(get_site_def_rw(), s->conn_rtt);
   }
   FINALLY
   TASK_END;
@@ -902,6 +974,11 @@ int send_to_all_except_self(site_def const *s, pax_msg *p, const char *dbg) {
 }
 /* purecov: end */
 
+/* Send to self in site */
+int send_to_self_site(site_def const *s, pax_msg *p) {
+  return _send_server_msg(s, get_nodeno(s), p);
+}
+
 /* Send to all servers */
 int send_to_all(pax_msg *p, const char *dbg) {
   return send_to_all_site(find_site_def(p->synode), p, dbg);
@@ -939,6 +1016,7 @@ int send_to_others(site_def const *s, pax_msg *p, const char *dbg) {
 int send_to_someone(site_def const *s, pax_msg *p,
                     const char *dbg [[maybe_unused]]) {
   int retval = 0;
+  int silent = DEFAULT_DETECTOR_LIVE_TIMEOUT;
   static node_no i = 0;
   node_no prev = 0;
 #ifdef MAXACCEPT
@@ -950,11 +1028,15 @@ int send_to_someone(site_def const *s, pax_msg *p,
 #endif
   /* IFDBG(D_NONE, FN; NDBG(max,u); NDBG(s->maxnodes,u)); */
   assert(max > 0);
+  if (the_app_xcom_cfg) {
+    silent = the_app_xcom_cfg->m_flp_timeout;
+  }
   prev = i % max;
   i = (i + 1) % max;
   while (i != prev) {
     /* IFDBG(D_NONE, FN; NDBG(i,u); NDBG(prev,u)); */
-    if (i != s->nodeno && !may_be_dead(s->detected, i, task_now())) {
+    if (i != s->nodeno && !may_be_dead(s->detected, i, task_now(), silent,
+                                       s->servers[i]->unreachable)) {
       IFDBG(D_NONE, FN; STRLIT(dbg); NDBG(i, u); NDBG(max, u); PTREXP(p));
       retval = _send_server_msg(s, i, p);
       break;
@@ -1056,8 +1138,10 @@ static int buffered_read_bytes(connection_descriptor const *rfd, srv_buf *buf,
 
   IFDBG(D_TRANSPORT, FN; NDBG(rfd->fd, d); PTREXP(s); NDBG(n, u));
 
-  int64_t nread{0};
-  TASK_BEGIN(void) s;
+  TASK_BEGIN
+
+      (void)
+  s;
   ep->left = n;
   ep->bytes = (char *)p;
 
@@ -1077,6 +1161,7 @@ static int buffered_read_bytes(connection_descriptor const *rfd, srv_buf *buf,
   } else {
     /* Buffered read makes sense */
     while (ep->left > 0) {
+      int64_t nread;
       /* Buffer is empty, reset and read */
       reset_srv_buf(buf);
 
@@ -1164,7 +1249,10 @@ int read_msg(connection_descriptor *rfd, pax_msg *p, server *s, int64_t *ret) {
                     string_arg("incoming connection will use protcol version"));
           add_event(EVENT_DUMP_PAD,
                     string_arg(xcom_proto_to_str(rfd->x_proto))););
-      if (rfd->x_proto > my_xcom_version) TASK_FAIL;
+      if (rfd->x_proto > my_xcom_version) {
+        G_INFO("x_proto:%d, my_xcom_version:%d", rfd->x_proto, my_xcom_version);
+        TASK_FAIL;
+      }
       if (is_new_node_eligible_for_ipv6(ep->x_version, get_site_def())) {
         G_WARNING(
             "Incoming node is not eligible to enter the group due to lack "
@@ -1174,6 +1262,7 @@ int read_msg(connection_descriptor *rfd, pax_msg *p, server *s, int64_t *ret) {
         TASK_FAIL;
       }
       set_connected(rfd, CON_PROTO);
+      G_INFO("read_msg sets CON_PROTO for fd:%d", rfd->fd);
       TASK_CALL(send_proto(rfd, rfd->x_proto, x_version_reply, ep->tag, ret));
     } else if (ep->x_type == x_version_reply) {
       /* Mark connection with negotiated protocol version */
@@ -1188,10 +1277,16 @@ int read_msg(connection_descriptor *rfd, pax_msg *p, server *s, int64_t *ret) {
                     0, string_arg("peer connection will use protcol version"));
                 add_event(EVENT_DUMP_PAD,
                           string_arg(xcom_proto_to_str(rfd->x_proto))););
-        if (rfd->x_proto > my_xcom_version || rfd->x_proto == x_unknown_proto)
+        if (rfd->x_proto > my_xcom_version || rfd->x_proto == x_unknown_proto) {
+          G_INFO("task failed because not compatitable");
           TASK_FAIL;
+        }
 
         set_connected(rfd, CON_PROTO);
+        G_INFO("read_msg sets CON_PROTO for fd:%d in mark, tag:%u", rfd->fd,
+               ep->tag);
+      } else {
+        G_INFO("send tag:%u is not equal to tag:%u", rfd->snd_tag, ep->tag);
       }
     }
   } while (ep->x_type != x_normal);
@@ -1200,14 +1295,17 @@ int read_msg(connection_descriptor *rfd, pax_msg *p, server *s, int64_t *ret) {
   assert(check_protoversion(ep->x_version, rfd->x_proto));
 #endif
   if (!check_protoversion(ep->x_version, rfd->x_proto)) {
+    G_INFO("check_protoversion is failed, x_version:%d, x_proto:%d",
+           ep->x_version, rfd->x_proto);
     TASK_FAIL;
   }
 
   /* OK, we can grok this version */
 
   /* Allocate buffer space for message */
-  ep->bytes = (char *)xcom_calloc((size_t)1, (size_t)ep->msgsize);
+  ep->bytes = (char *)calloc((size_t)1, (size_t)ep->msgsize);
   if (!ep->bytes) {
+    G_INFO("calloc failed, msgsize:%ld", (size_t)ep->msgsize);
     TASK_FAIL;
   }
 
@@ -1224,6 +1322,7 @@ int read_msg(connection_descriptor *rfd, pax_msg *p, server *s, int64_t *ret) {
   /* Deallocate buffer */
   X_FREE(ep->bytes);
   if (ep->n <= 0 || !deserialize_ok) {
+    G_INFO("task failed, ep->n:%ld", ep->n);
     IFDBG(D_NONE, FN; NDBG(rfd->fd, d); NDBG64(ep->n); NDBG(deserialize_ok, d));
     TASK_FAIL;
   }
@@ -1289,6 +1388,7 @@ int buffered_read_msg(connection_descriptor *rfd, srv_buf *buf, pax_msg *p,
       }
 
       set_connected(rfd, CON_PROTO);
+      G_INFO("buffered_read_msg sets CON_PROTO for fd:%d", rfd->fd);
       TASK_CALL(send_proto(rfd, rfd->x_proto, x_version_reply, ep->tag, ret));
     } else if (ep->x_type == x_version_reply) {
       /* Mark connection with negotiated protocol version */
@@ -1305,6 +1405,7 @@ int buffered_read_msg(connection_descriptor *rfd, srv_buf *buf, pax_msg *p,
           TASK_FAIL;
 
         set_connected(rfd, CON_PROTO);
+        G_INFO("buffered_read_msg set CON_PROTO for fd:%d in mark", rfd->fd);
       }
     }
   } while (ep->x_type != x_normal);
@@ -1319,7 +1420,7 @@ int buffered_read_msg(connection_descriptor *rfd, srv_buf *buf, pax_msg *p,
   /* OK, we can grok this version */
 
   /* Allocate buffer space for message */
-  ep->bytes = (char *)xcom_calloc((size_t)1, (size_t)ep->msgsize);
+  ep->bytes = (char *)calloc((size_t)1, (size_t)ep->msgsize);
   if (!ep->bytes) {
     TASK_FAIL;
   }
@@ -1344,7 +1445,6 @@ int buffered_read_msg(connection_descriptor *rfd, srv_buf *buf, pax_msg *p,
   TASK_END;
 }
 
-#if 0
 int recv_proto(connection_descriptor const *rfd, xcom_proto *x_proto,
                x_msg_type *x_type, unsigned int *tag, int64_t *ret) {
   DECL_ENV
@@ -1371,7 +1471,6 @@ int recv_proto(connection_descriptor const *rfd, xcom_proto *x_proto,
   FINALLY
   TASK_END;
 }
-#endif
 
 /* Sender task */
 
@@ -1409,7 +1508,6 @@ int sender_task(task_arg arg) {
 #endif
   END_ENV;
 
-  int64_t ret_code{0};
   TASK_BEGIN
 
   ep->channel_empty_time = task_now();
@@ -1436,7 +1534,16 @@ int sender_task(task_arg arg) {
         ep->s->reconnect = true;
       }
 #endif
-      if (is_connected(ep->s->con)) break;
+      if (is_connected(ep->s->con)) {
+        ep->s->unreachable = 0;
+        break;
+      }
+
+      if (ep->s->unreachable < 0) {
+        ep->s->unreachable = 1;
+      } else {
+        ep->s->unreachable++;
+      }
 
       if (ep->dtime < MAX_CONNECT_WAIT) {
         G_MESSAGE("Connection to %s:%d failed", ep->s->srv, ep->s->port);
@@ -1450,7 +1557,7 @@ int sender_task(task_arg arg) {
         ep->channel_empty_time = task_now();
       }
 
-      ep->dtime += CONNECT_WAIT_INCREASE; /* Increase wait time for next try */
+      ep->dtime *= CONNECT_WAIT_INCREASE; /* Increase wait time for next try */
       if (ep->dtime > MAX_CONNECT_WAIT) {
         ep->dtime = MAX_CONNECT_WAIT;
       }
@@ -1481,6 +1588,7 @@ int sender_task(task_arg arg) {
       }
       CHANNEL_GET(&ep->s->outgoing, &ep->link, msg_link);
       {
+        int64_t ret_code;
         /* IFDBG(D_NONE, FN; PTREXP(stack); PTREXP(ep->link));
         IFDBG(D_NONE, FN; PTREXP(&ep->s->outgoing);
                COPY_AND_FREE_GOUT(dbg_msg_link(ep->link)););
@@ -1515,6 +1623,7 @@ int sender_task(task_arg arg) {
               add_event(EVENT_DUMP_PAD, uint_arg(ep->link->p->to)); add_event(
                   EVENT_DUMP_PAD, string_arg(pax_op_to_str(ep->link->p->op))););
         } else {
+          G_INFO("sender_task sets CON_PROTO for fd:%d", ep->s->con->fd);
           set_connected(ep->s->con, CON_FD);
           /* Send protocol negotiation request */
           do {
@@ -1525,8 +1634,8 @@ int sender_task(task_arg arg) {
             }
             ep->tag = incr_tag(ep->tag);
           } while (ret_code < 0);
-          G_DEBUG("sent negotiation request for protocol %d fd %d",
-                  my_xcom_version, ep->s->con->fd);
+          G_INFO("sent negotiation request for protocol version:%d and fd:%d",
+                 my_xcom_version, ep->s->con->fd);
           ADD_DBG(
               D_TRANSPORT,
               add_event(EVENT_DUMP_PAD,
@@ -1539,9 +1648,13 @@ int sender_task(task_arg arg) {
           while (!proto_done(ep->s->con)) {
             TASK_DELAY(0.1);
             if (!is_connected(ep->s->con)) {
+              G_INFO(
+                  "leave the proto_done checking while not connected for fd:%d",
+                  ep->s->con->fd);
               goto next;
             }
           }
+          G_INFO("proto is done for fd:%d", ep->s->con->fd);
           ADD_DBG(
               D_TRANSPORT,
               add_event(EVENT_DUMP_PAD, string_arg("will use protocol"));
@@ -1664,9 +1777,9 @@ void update_servers(site_def *s, cargo_type operation) {
       char *name = NULL;
       xcom_port port = 0;
 
-      name = (char *)xcom_malloc(IP_MAX_SIZE);
+      name = (char *)malloc(IP_MAX_SIZE);
 
-      /* In this specific place, addr must have been validated elsewhere,
+      /* In this specific place, addr mut have been validated elsewhere,
          specifically when the node is added. */
       if (get_ip_and_port(addr, name, &port)) {
         G_INFO("Error parsing ip:port for new server. Incorrect value is %s",
@@ -1702,7 +1815,6 @@ void update_servers(site_def *s, cargo_type operation) {
             /* purecov: end */
           }
         }
-        IFDBG(D_BUG, FN; PTREXP(s->servers[i]));
       }
     }
     /* Zero the rest */
@@ -1765,8 +1877,10 @@ int tcp_reaper_task(task_arg arg [[maybe_unused]]) {
       double now = task_now();
       for (i = 0; i < maxservers; i++) {
         server *s = all_servers[i];
-        if (s && s->con->fd != -1 && (s->active + 10.0) < now) {
+        if (s && s->con->fd != -1 && (s->active + 300.0) < now) {
+          G_WARNING("write timeout in xcom and shutdown connection");
           shutdown_connection(s->con);
+          s->unreachable = DIRECT_ABORT_CONN;
         }
       }
     }
@@ -1792,6 +1906,9 @@ void ssl_free_con(connection_descriptor *con) {
 #endif
 
 void close_connection(connection_descriptor *con) {
+  if (con->fd > 0) {
+    G_INFO("set CON_NULL for fd:%d in close_connection", con->fd);
+  }
   close_open_connection(con);
   set_connected(con, CON_NULL);
 }
@@ -1808,6 +1925,9 @@ void shutdown_connection(connection_descriptor *con) {
 
 void reset_connection(connection_descriptor *con) {
   if (con) {
+    if (con->fd > 0) {
+      G_INFO("set CON_NULL for fd:%d in reset_connection", con->fd);
+    }
     con->fd = -1;
 #ifndef XCOM_WITHOUT_OPENSSL
     con->ssl_fd = 0;
@@ -1916,9 +2036,6 @@ static int match_ipv6(parse_buf *p) {
         G_DEBUG("Malformed IPv6 address '%s'", p->address);
         return 0;
       }
-    } else if (!isxdigit(*(p->in))) {
-      G_DEBUG("Malformed IPv6 address '%s'", p->address);
-      return 0;
     }
     p->in++;
   }
@@ -1947,28 +2064,34 @@ static int match_address(parse_buf *p) {
     return match_ipv4_or_name(p);
 }
 
+void update_zone_id_for_consensus(const char *ip, int zone_id,
+                                  bool zone_id_sync_mode) {
+  int i;
+  for (i = 0; i < maxservers; i++) {
+    if (strcmp(all_servers[i]->srv, ip) == 0) {
+      /*
+       * Update server zone id when updated.
+       *
+       */
+      all_servers[i]->zone_id = zone_id;
+      all_servers[i]->zone_id_sync_mode = zone_id_sync_mode;
+    }
+  }
+}
+
 /* Return 1 if address is well-formed, 0 if not */
 static int match_ip_and_port(char const *address, char ip[IP_MAX_SIZE],
                              xcom_port *port) {
   parse_buf p;
-  // Sanity check before return
-  auto ok_ip = [&ip]() { return ip[0] != 0; };
 
   /* Sanity checks */
-  if (address == NULL || (strlen(address) == 0)) {
+  if (address == NULL || (strlen(address) == 0) || ip == NULL) {
     return 0;
   }
 
   /* Zero the output buffer and port */
-  if (ip)
-    memset(ip, 0, IP_MAX_SIZE);
-  else
-    return 0;
-
-  if (port)
-    *port = 0;
-  else
-    return 0;
+  memset(ip, 0, IP_MAX_SIZE);
+  *port = 0;
 
   p.in = p.address = address;
   p.out = ip;
@@ -1983,12 +2106,11 @@ static int match_ip_and_port(char const *address, char ip[IP_MAX_SIZE],
   p.in++;
   if (*(p.in) == ':') { /* We have a port */
     p.in++;
-    return ok_ip() && match_port(&p, port);
+    return match_port(&p, port);
   }
-  return ok_ip() && NO_PORT_IN_ADDRESS; /* No :port, but that may be OK */
+  return NO_PORT_IN_ADDRESS; /* No :port, but that may be OK */
 }
 
-int get_ip_and_port(char const *address, char ip[IP_MAX_SIZE],
-                    xcom_port *port) {
+int get_ip_and_port(char *address, char ip[IP_MAX_SIZE], xcom_port *port) {
   return !match_ip_and_port(address, ip, port);
 }

@@ -86,7 +86,6 @@ uint64_t Xcom_member_state::get_encode_snapshot_size() const {
 
   return snapshot_size;
 }
-extern uint32_t get_my_xcom_id();
 
 bool Xcom_member_state::encode_header(uchar *buffer,
                                       uint64_t *buffer_len) const {
@@ -98,8 +97,7 @@ bool Xcom_member_state::encode_header(uchar *buffer,
   uint64_t encoded_size = get_encode_header_size();
   unsigned char *slider = buffer;
 
-  MYSQL_GCS_LOG_TRACE("xcom_id %x Encoding header for exchangeable data.",
-                      get_my_xcom_id())
+  MYSQL_GCS_LOG_TRACE("Encoding header for exchangeable data.")
 
   if (buffer == nullptr || buffer_len == nullptr) {
     MYSQL_GCS_LOG_ERROR(
@@ -147,9 +145,8 @@ bool Xcom_member_state::encode_header(uchar *buffer,
   assert(static_cast<uint64_t>(slider - buffer) == encoded_size);
 
   MYSQL_GCS_LOG_TRACE(
-      "xcom_id %x Encoded header for exchangeable data: (header)=%llu view_id "
-      "%s",
-      get_my_xcom_id(), static_cast<long long unsigned>(encoded_size),
+      "Encoded header for exchangeable data: (header)=%llu view_id %s",
+      static_cast<long long unsigned>(encoded_size),
       m_view_id->get_representation().c_str());
 
   return false;
@@ -164,8 +161,7 @@ bool Xcom_member_state::encode_snapshot(uchar *buffer,
   /* There is no snapshot information on protocol V1. */
   if (m_version == Gcs_protocol_version::V1) goto end;
 
-  MYSQL_GCS_LOG_TRACE("xcom_id %x Encoding snapshot for exchangeable data.",
-                      get_my_xcom_id())
+  MYSQL_GCS_LOG_TRACE("Encoding snapshot for exchangeable data.")
 
   if (buffer == nullptr || buffer_len == nullptr) {
     MYSQL_GCS_LOG_ERROR(
@@ -627,6 +623,9 @@ enum_gcs_error Gcs_xcom_state_exchange::broadcast_state(
 
   Gcs_group_identifier group_id(*m_group_name);
   Gcs_message message(m_local_information, group_id, message_data);
+
+  MYSQL_GCS_LOG_INFO(
+      "xcom_communication do_send_message CT_INTERNAL_STATE_EXCHANGE");
 
   unsigned long long message_length = 0;
   return xcom_communication->do_send_message(

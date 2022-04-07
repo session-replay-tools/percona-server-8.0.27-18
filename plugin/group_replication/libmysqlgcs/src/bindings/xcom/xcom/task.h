@@ -301,6 +301,18 @@ typedef struct task_queue task_queue;
 
 #define TERMINATE goto task_cleanup
 
+#define TASK_STACK_DEBUG                                          \
+  if (stack->debug) {                                             \
+    char *fnpos = strrchr(__FILE__, DIR_SEP);                     \
+    if (fnpos)                                                    \
+      fnpos++;                                                    \
+    else                                                          \
+      fnpos = __FILE__;                                           \
+    IFDBG(D_NONE, FN; STRLIT("TASK_BEGIN "); STREXP(stack->name); \
+          STRLIT(fnpos); STRLIT(":"); NPUT(stack->sp->state, d);  \
+          NDBG(stack->terminate, d));                             \
+  }
+
 /* Switch on task state. The first time, allocate a new stack frame and check
  * for termination */
 #define TASK_BEGIN                                            \
@@ -585,6 +597,7 @@ extern task_env *wait_io(task_env *t, int fd, int op);
 
 extern result con_write(connection_descriptor const *wfd, void *buf, int n);
 extern result set_nodelay(int fd);
+extern bool retrieve_addr_from_fd(int fd, bool client, char *ip, int *port);
 
 extern task_env *timed_wait_io(task_env *t, int fd, int op, double timeout);
 

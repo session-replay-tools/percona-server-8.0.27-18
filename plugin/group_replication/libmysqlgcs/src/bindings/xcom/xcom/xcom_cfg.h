@@ -40,6 +40,8 @@ typedef struct cfg_app_xcom {
   */
   uint64_t m_cache_limit;
 
+  uint64_t m_flp_timeout;
+
   /*
    The (address, incarnation) pair that uniquely identifies this XCom instance.
   */

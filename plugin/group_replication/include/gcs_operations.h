@@ -39,7 +39,6 @@
 #include "plugin/group_replication/libmysqlgcs/src/bindings/xcom/xcom/network/include/network_provider.h"
 
 class Transaction_message_interface;
-#include "plugin/group_replication/libmysqlgcs/include/mysql/gcs/gcs_member_identifier.h"
 
 /**
   @class Gcs_operations
@@ -292,52 +291,6 @@ class Gcs_operations {
   enum enum_gcs_error set_write_concurrency(uint32_t new_write_concurrency);
 
   /**
-   * @brief Reconfigures the group's "consensus leaders."
-   *
-   * Instructs the underlying GCS to use @c leader as the single preferred
-   * consensus leader.
-   *
-   * The method is non-blocking, meaning that it shall only send the
-   * request to an underlying GCS. The final result can be polled via @c
-   * get_leaders.
-   *
-   * @param leader The member you desire to act as a consensus leader.
-   *
-   * @retval GCS_OK if successful
-   * @retval GCS_NOK if unsuccessful
-   */
-  enum enum_gcs_error set_leader(Gcs_member_identifier const &leader);
-
-  /**
-   * @brief Reconfigures the group's "consensus leaders."
-   *
-   * Instructs the underlying GCS to use every member as a consensus leader.
-   *
-   * The method is non-blocking, meaning that it shall only send the
-   * request to an underlying GCS. The final result can be polled via @c
-   * get_leaders.
-   *
-   * @retval GCS_OK if successful
-   * @retval GCS_NOK if unsuccessful
-   */
-  enum enum_gcs_error set_everyone_leader();
-
-  /**
-   * @brief Inspect the group's "consensus leader" configuration.
-   *
-   * @param[out] preferred_leaders The members specified as preferred leaders.
-   * @param[out] actual_leaders The members actually carrying out the leader
-   * role at this moment.
-   *
-   * @retval GCS_OK if successful, @c preferred_leaders and @c actual_leaders
-   * contain the result
-   * @retval GCS_NOK if unsuccessful
-   */
-  enum enum_gcs_error get_leaders(
-      std::vector<Gcs_member_identifier> &preferred_leaders,
-      std::vector<Gcs_member_identifier> &actual_leaders);
-
-  /**
     Retrieves the group's "group communication protocol" value.
 
     @retval the protocol version
@@ -357,6 +310,16 @@ class Gcs_operations {
    */
   std::pair<bool, std::future<void>> set_protocol_version(
       Gcs_protocol_version gcs_protocol);
+
+  /**
+    Requests GCS to change the flp timeout of the XCom communication.
+
+    @param new_timeout The new flp timeout of the XCom communication.
+
+    @retval GCS_OK if request successfully scheduled
+    @retval GCS_NOK if GCS is unable to schedule the request
+  */
+  enum enum_gcs_error set_xcom_flp_timeout(uint64_t new_timeout);
 
   /**
    Get the maximum protocol version currently supported by the group.
@@ -402,6 +365,9 @@ class Gcs_operations {
     @retval false otherwise.
   */
   bool is_initialized();
+
+  void update_zone_id_through_gcs(const char *ip, int zone_id,
+                                  bool zone_id_sync_mode);
 
  private:
   /**

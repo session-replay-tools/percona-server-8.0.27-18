@@ -33,6 +33,8 @@
 #include <map>
 #include <string>
 
+#include "sql/rpl_gtid.h"
+
 #include "plugin/group_replication/libmysqlgcs/include/mysql/gcs/gcs_interface.h"
 #include "plugin/group_replication/libmysqlgcs/include/mysql/gcs/gcs_logging_system.h"
 #include "plugin/group_replication/libmysqlgcs/include/mysql/gcs/gcs_psi.h"
@@ -98,14 +100,6 @@ class Gcs_xcom_config {
    * @returns true if the event horizons are the same, false otherwise
    */
   bool same_event_horizon(xcom_event_horizon const &event_horizon) const;
-  /**
-   * Checks whether this configuration's membership matches the given
-   * membership.
-   *
-   * @param xcom_nodes the membership to compare against
-   * @returns true if the memberships are the same, false otherwise
-   */
-  bool same_xcom_nodes_v3(Gcs_xcom_nodes const &xcom_nodes) const;
   /*
    * This class will have a singleton object, so we delete the {copy,move}
    * {constructor,assignment}. This way the compiler slaps us on the wrist if we
@@ -215,6 +209,9 @@ class Gcs_xcom_interface : public Gcs_interface {
                                           Gcs_suspicions_manager *mgr);
 
   enum_gcs_error set_logger(Logger_interface *logger) override;
+
+  void update_zone_id_for_xcom_node(const char *ip, int zone_id,
+                                    bool zone_id_sync_mode) override;
 
   void set_xcom_group_information(const std::string &group_id);
 
@@ -377,6 +374,7 @@ class Gcs_xcom_interface : public Gcs_interface {
 
   // Holder to the created group interfaces, in which the key is the group
   std::map<std::string, gcs_xcom_group_interfaces *> m_group_interfaces;
+  Checkable_rwlock m_group_interface_lock;
 
   std::map<u_long, Gcs_group_identifier *> m_xcom_configured_groups;
 

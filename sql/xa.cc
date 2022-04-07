@@ -1248,9 +1248,12 @@ bool Sql_cmd_xa_prepare::execute(THD *thd) {
   bool st = trans_xa_prepare(thd);
 
   if (!st) {
-    if (!thd->is_engine_ha_data_detached() ||
-        !(st = applier_reset_xa_trans(thd)))
+    if (!thd->is_engine_ha_data_detached()) {
       my_ok(thd);
+    } else if (!(st = applier_reset_xa_trans(thd))) {
+      trans_track_end_trx(thd);
+      my_ok(thd);
+    }
   }
 
   return st;

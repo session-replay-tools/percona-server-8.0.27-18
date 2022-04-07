@@ -193,7 +193,7 @@ const char *relay_log_basename = nullptr;
   of Relay_log_info::gaq (see @c slave_start_workers()).
   It can be set to any value in [1, ULONG_MAX - 1] range.
 */
-const ulong mts_slave_worker_queue_len_max = 16384;
+const ulong mts_slave_worker_queue_len_max = 16384 << 6;
 
 /*
   Statistics go to the error log every # of seconds when

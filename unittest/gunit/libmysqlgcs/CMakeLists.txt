@@ -81,7 +81,6 @@ SET(GCS_XCOM_TESTS
   xcom/gcs_xcom_expels_in_progress
   xcom/gcs_xcom_network_provider
   xcom/gcs_xcom_network_provider_manager
-  xcom/gcs_xcom_xcom_single_writer
 )
 
 # When binding using IPv6 the way XCom does (dual stack IPv4/IPv6), it

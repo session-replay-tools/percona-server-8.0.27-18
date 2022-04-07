@@ -48,6 +48,8 @@
 */
 #define BUFFER_READ_PKE 8
 
+#define AFTER_PREPARE_SURPLUS_EXPECTED_GTID 7
+
 void cleanup_transaction_write_set(
     Transaction_write_set *transaction_write_set) {
   DBUG_TRACE;
@@ -167,6 +169,13 @@ int group_replication_trans_before_dml(Trans_param *param, int &out) {
   return 0;
 }
 
+static ulong getusec() {
+  struct timeval tp;
+  gettimeofday(&tp, NULL);
+  ulong sec = tp.tv_sec * 1000000 + tp.tv_usec;
+  return sec;
+}
+
 int group_replication_trans_before_commit(Trans_param *param) {
   DBUG_TRACE;
   int error = 0;
@@ -187,6 +196,10 @@ int group_replication_trans_before_commit(Trans_param *param) {
     const uint sleep_time_seconds = VIEW_MODIFICATION_TIMEOUT * 1.5;
     my_sleep(sleep_time_seconds * 1000000);
   });
+
+  if (is_arbitrator_role()) {
+    return 1;
+  }
 
   /*
     If the originating id belongs to a thread in the plugin, the transaction
@@ -226,6 +239,16 @@ int group_replication_trans_before_commit(Trans_param *param) {
               member_status)) {
         return 1; /* purecov: inspected */
       }
+
+      DBUG_EXECUTE_IF(
+          "group_replication_before_commit_wait_recovery_message_applied", {
+            if (param->gtid_info.gno == AFTER_PREPARE_SURPLUS_EXPECTED_GTID) {
+              const char act[] =
+                  "now WAIT_FOR "
+                  "signal.continue_to_commit";
+              assert(!debug_sync_set_action(current_thd, STRING_WITH_LEN(act)));
+            }
+          };);
     }
 
     return 0;
@@ -281,6 +304,8 @@ int group_replication_trans_before_commit(Trans_param *param) {
   // Transaction information.
   const ulong transaction_size_limit = get_transaction_size_limit();
   my_off_t transaction_size = 0;
+  ulong request_time_threshold = get_request_time_threshold() * 1000;
+  ulong time_diff = 0;
 
   const bool is_gtid_specified = param->gtid_info.type == ASSIGNED_GTID;
   Gtid gtid = {param->gtid_info.sidno, param->gtid_info.gno};
@@ -535,6 +560,13 @@ int group_replication_trans_before_commit(Trans_param *param) {
   */
   applier_module->get_flow_control_module()->do_wait();
 
+  if (request_time_threshold > 0) {
+    if (request_time_threshold < 10000) {
+      request_time_threshold = 10000;
+    }
+    time_diff = getusec();
+  }
+
   // Broadcast the Transaction Message
   send_error = gcs_module->send_transaction_message(*transaction_msg);
 
@@ -568,6 +600,15 @@ int group_replication_trans_before_commit(Trans_param *param) {
     error = post_wait_error;
     goto err;
     /* purecov: end */
+  }
+
+  if (request_time_threshold > 0) {
+    time_diff = getusec() - time_diff;
+    if (time_diff >= request_time_threshold) {
+      LogPluginErrMsg(INFORMATION_LEVEL, ER_LOG_PRINTF_MSG,
+                      "MGR request time:%luus, server id:%lu, thread_id:%u",
+                      time_diff, get_server_id(), param->thread_id);
+    }
   }
 
 err:

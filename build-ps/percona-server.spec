@@ -611,10 +611,12 @@ install -d -m 0755 %{buildroot}%{_sysconfdir}/ld.so.conf.d
 echo "%{_libdir}/mysql" > %{buildroot}%{_sysconfdir}/ld.so.conf.d/mysql-%{_arch}.conf
 
 # multiarch support
-%ifarch %{multiarchs}
-  mv %{buildroot}/%{_bindir}/mysql_config %{buildroot}/%{_bindir}/mysql_config-%{__isa_bits}
-  install -p -m 0755 %{SOURCE5} %{buildroot}/%{_bindir}/mysql_config
-%endif
+#%ifarch %{multiarchs}
+#  mv %{buildroot}/%{_bindir}/mysql_config %{buildroot}/%{_bindir}/mysql_config-%{__isa_bits}
+#  install -p -m 0755 %{SOURCE5} %{buildroot}/%{_bindir}/mysql_config
+#%endif
+mv %{buildroot}/%{_bindir}/mysql_config %{buildroot}/%{_bindir}/mysql_config-%{__isa_bits}
+install -p -m 0755 %{SOURCE5} %{buildroot}/%{_bindir}/mysql_config
 
 %if 0%{?systemd}
 %else

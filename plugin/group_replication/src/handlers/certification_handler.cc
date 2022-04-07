@@ -52,7 +52,6 @@ Certification_handler::~Certification_handler() {
     delete (*stored_view_info_it)->view_change_pevent;
     delete *stored_view_info_it;
   }
-  pending_view_change_events_waiting_for_consistent_transactions.clear();
 }
 
 int Certification_handler::initialize() {
@@ -73,7 +72,8 @@ int Certification_handler::terminate() {
   return error;
 }
 
-int Certification_handler::handle_action(Pipeline_action *action) {
+int Certification_handler::handle_action(Pipeline_action *action,
+                                         bool io_buffered) {
   DBUG_TRACE;
 
   int error = 0;
@@ -112,23 +112,23 @@ int Certification_handler::handle_action(Pipeline_action *action) {
 
   if (error) return error;
 
-  return next(action);
+  return next(action, io_buffered);
 }
 
 int Certification_handler::handle_event(Pipeline_event *pevent,
-                                        Continuation *cont) {
+                                        Continuation *cont, bool io_buffered) {
   DBUG_TRACE;
 
   Log_event_type ev_type = pevent->get_event_type();
   switch (ev_type) {
     case binary_log::TRANSACTION_CONTEXT_EVENT:
-      return handle_transaction_context(pevent, cont);
+      return handle_transaction_context(pevent, cont, false);
     case binary_log::GTID_LOG_EVENT:
-      return handle_transaction_id(pevent, cont);
+      return handle_transaction_id(pevent, cont, io_buffered);
     case binary_log::VIEW_CHANGE_EVENT:
-      return extract_certification_info(pevent, cont);
+      return extract_certification_info(pevent, cont, io_buffered);
     default:
-      next(pevent, cont);
+      next(pevent, cont, io_buffered);
       return 0;
   }
 }
@@ -204,7 +204,8 @@ void Certification_handler::reset_transaction_context() {
 }
 
 int Certification_handler::handle_transaction_context(Pipeline_event *pevent,
-                                                      Continuation *cont) {
+                                                      Continuation *cont,
+                                                      bool io_buffered) {
   DBUG_TRACE;
   int error = 0;
 
@@ -212,13 +213,14 @@ int Certification_handler::handle_transaction_context(Pipeline_event *pevent,
   if (error)
     cont->signal(1, true); /* purecov: inspected */
   else
-    next(pevent, cont);
+    next(pevent, cont, io_buffered);
 
   return error;
 }
 
 int Certification_handler::handle_transaction_id(Pipeline_event *pevent,
-                                                 Continuation *cont) {
+                                                 Continuation *cont,
+                                                 bool io_buffered) {
   DBUG_TRACE;
   int error = 0;
   rpl_gno seq_number = 0;
@@ -461,7 +463,7 @@ after_certify:
       }
 
       // Pass transaction to next action.
-      next(pevent, cont);
+      next(pevent, cont, io_buffered);
     } else if (seq_number < 0) {
       error = 1;
       cont->signal(1, true);
@@ -478,7 +480,8 @@ end:
 }
 
 int Certification_handler::extract_certification_info(Pipeline_event *pevent,
-                                                      Continuation *cont) {
+                                                      Continuation *cont,
+                                                      bool io_buffered) {
   DBUG_TRACE;
   int error = 0;
 
@@ -491,18 +494,7 @@ int Certification_handler::extract_certification_info(Pipeline_event *pevent,
       On that case we just have to queue it on the group applier
       channel, without any special handling.
     */
-    next(pevent, cont);
-    return error;
-  }
-  if (pevent->is_delayed_view_change_waiting_for_consistent_transactions()) {
-    std::string local_gtid_certified_string{};
-    cert_module->get_local_certified_gtid(local_gtid_certified_string);
-    pending_view_change_events_waiting_for_consistent_transactions.push_back(
-        std::make_unique<View_change_stored_info>(
-            pevent, local_gtid_certified_string,
-            cert_module->generate_view_change_group_gtid()));
-    cont->set_transation_discarded(true);
-    cont->signal(0, cont->is_transaction_discarded());
+    next(pevent, cont, io_buffered);
     return error;
   }
 
@@ -694,7 +686,7 @@ int Certification_handler::inject_transactional_events(Pipeline_event *pevent,
 
   Pipeline_event *gtid_pipeline_event =
       new Pipeline_event(gtid_log_event, fd_event);
-  next(gtid_pipeline_event, cont);
+  next(gtid_pipeline_event, cont, false);
 
   int error = cont->wait();
   delete gtid_pipeline_event;
@@ -709,7 +701,7 @@ int Certification_handler::inject_transactional_events(Pipeline_event *pevent,
 
   Pipeline_event *begin_pipeline_event =
       new Pipeline_event(begin_log_event, fd_event);
-  next(begin_pipeline_event, cont);
+  next(begin_pipeline_event, cont, false);
 
   error = cont->wait();
   delete begin_pipeline_event;
@@ -722,7 +714,7 @@ int Certification_handler::inject_transactional_events(Pipeline_event *pevent,
    As we don't have asynchronous we can use the received Continuation.
    If that is no longer true, another Continuation object must be created here.
   */
-  next(pevent, cont);
+  next(pevent, cont, false);
   error = cont->wait();
   if (error) {
     return 0; /* purecov: inspected */
@@ -736,7 +728,7 @@ int Certification_handler::inject_transactional_events(Pipeline_event *pevent,
 
   Pipeline_event *end_pipeline_event =
       new Pipeline_event(end_log_event, fd_event);
-  next(end_pipeline_event, cont);
+  next(end_pipeline_event, cont, false);
   delete end_pipeline_event;
 
   return 0;
@@ -748,25 +740,7 @@ int Certification_handler::log_view_change_event_in_order(
   DBUG_TRACE;
 
   int error = 0;
-  /*
-    Certification info needs to be added into the `vchange_event` when this view
-    if first handled (no GITD) or when it is being resumed after waiting from
-    consistent transactions.
-  */
-  const bool first_log_attempt =
-      (-1 == gtid->gno || view_pevent->is_delayed_view_change_resumed());
-
-  /*
-    If this view was delayed to wait for consistent transactions to finish, we
-    need to recover its previously computed GTID information.
-  */
-  if (view_pevent->is_delayed_view_change_resumed()) {
-    auto &stored_view_info =
-        pending_view_change_events_waiting_for_consistent_transactions.front();
-    local_gtid_string.assign(stored_view_info->local_gtid_certified);
-    *gtid = stored_view_info->view_change_gtid;
-    pending_view_change_events_waiting_for_consistent_transactions.pop_front();
-  }
+  bool first_log_attempt = (gtid->gno == -1);
 
   Log_event *event = nullptr;
   error = view_pevent->get_LogEvent(&event);
@@ -785,6 +759,9 @@ int Certification_handler::log_view_change_event_in_order(
   if (unlikely(view_change_event_id == "-1")) return 0;
 
   if (first_log_attempt) {
+    LogPluginErrMsg(
+        INFORMATION_LEVEL, ER_LOG_PRINTF_MSG,
+        "before getting certification info in log_view_change_event_in_order");
     std::map<std::string, std::string> cert_info;
     cert_module->get_certification_info(&cert_info);
     size_t event_size = 0;
@@ -802,6 +779,9 @@ int Certification_handler::log_view_change_event_in_order(
           "Certification information is too large for transmission.";
       vchange_event->set_certification_info(&cert_info, &event_size);
     }
+    LogPluginErrMsg(
+        INFORMATION_LEVEL, ER_LOG_PRINTF_MSG,
+        "after setting certification info in log_view_change_event_in_order");
   }
 
   // Assure the last known local transaction was already executed

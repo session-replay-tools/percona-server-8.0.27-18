@@ -43,13 +43,18 @@ struct server {
   connection_descriptor *con; /* Descriptor for open connection */
   double active;              /* Last activity */
   double detected;            /* Last incoming */
+  double conn_rtt;
+  double large_transfer_detected; /* Process large transfer */
+  double last_ping_received;      /* Last received ping timestamp */
   channel outgoing;           /* Outbound messages */
   task_env *sender;           /* The sender task */
   task_env *reply_handler;    /* The reply task */
   srv_buf out_buf;
   int invalid;
+  int unreachable;
   int number_of_pings_received; /* Number of pings received from this server */
-  double last_ping_received;    /* Last received ping timestamp */
+  unsigned int zone_id : 4;
+  bool zone_id_sync_mode;
 #if defined(_WIN32)
   bool reconnect; /*States if the server should be reconnected*/
 #endif

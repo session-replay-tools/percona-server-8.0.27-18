@@ -6678,6 +6678,11 @@ static Sys_var_uint Sys_replica_checkpoint_period(
     VALID_RANGE(1, UINT_MAX), DEFAULT(300), BLOCK_SIZE(1));
 #endif /* NDEBUG */
 
+/*
+ * If the value is too small, it will affect mts speed.
+ * If the value is too large, it will affect slave consistent reading speed for
+ * mgr.
+ */
 static Sys_var_deprecated_alias Sys_slave_checkpoint_period(
     "slave_checkpoint_period", Sys_replica_checkpoint_period);
 

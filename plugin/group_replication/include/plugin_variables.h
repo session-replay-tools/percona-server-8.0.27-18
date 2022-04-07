@@ -42,6 +42,7 @@ struct plugin_local_variables {
   mysql_mutex_t plugin_running_mutex;
   mysql_mutex_t plugin_online_mutex;
   mysql_mutex_t plugin_modules_termination_mutex;
+  mysql_mutex_t plugin_applier_module_mutex;
   mysql_cond_t plugin_online_condition;
   Plugin_waitlock *online_wait_mutex;
   Checkable_rwlock *plugin_stop_lock;
@@ -65,10 +66,6 @@ struct plugin_local_variables {
   int write_set_extraction_algorithm;
   enum_wait_on_start_process_result wait_on_start_process;
   bool recovery_timeout_issue_on_stop;
-  // The first argument indicates whether or not to use the value stored in this
-  // pair's second argument for the group_replication_paxos_single_leader sysvar
-  // or the actual value that's stored on the sysvar
-  std::pair<bool, bool> allow_single_leader_latch{false, true};
 
   // (60min / 5min) * 24 * 7, i.e. a week.
   const uint MAX_AUTOREJOIN_TRIES = 2016;
@@ -107,7 +104,6 @@ struct plugin_local_variables {
     wait_on_engine_initialization = false;
     write_set_extraction_algorithm = HASH_ALGORITHM_OFF;
     wait_on_start_process = WAIT_ON_START_PROCESS_SUCCESS;
-    allow_single_leader_latch.first = false;
     recovery_timeout_issue_on_stop = false;
     // the default is 5 minutes (300 secs).
     rejoin_timeout = 300ULL;
@@ -219,7 +215,7 @@ struct plugin_options_variables {
   char *ip_whitelist_var;
   char *ip_allowlist_var;
 
-#define DEFAULT_COMMUNICATION_MAX_MESSAGE_SIZE 10485760
+#define DEFAULT_COMMUNICATION_MAX_MESSAGE_SIZE 1048576
 #define MAX_COMMUNICATION_MAX_MESSAGE_SIZE get_max_replica_max_allowed_packet()
 #define MIN_COMMUNICATION_MAX_MESSAGE_SIZE 0
   ulong communication_max_message_size_var;
@@ -229,8 +225,16 @@ struct plugin_options_variables {
 #define MAX_MESSAGE_CACHE_SIZE ULONG_MAX
   ulong message_cache_size_var;
 
+#define DEFAULT_FLP_TIMEOUT 5
+#define MIN_FLP_TIMEOUT 3
+#define MAX_FLP_TIMEOUT 60
+  ulong communication_flp_timeout_var;
+
   bool single_primary_mode_var;
   bool enforce_update_everywhere_checks_var;
+  bool arbitrator_role_var;
+  bool majority_after_mode_var;
+  int single_primary_fast_mode_var;
 
   const char *flow_control_mode_values[3] = {"DISABLED", "QUOTA",
                                              (const char *)nullptr};
@@ -242,12 +246,17 @@ struct plugin_options_variables {
 #define MIN_FLOW_CONTROL_THRESHOLD 0
   long flow_control_certifier_threshold_var;
   long flow_control_applier_threshold_var;
+#define MAX_FLOW_CONTROL_REPLAY_LAG_BEHIND 86400
+  long flow_control_replay_lag_behind_var;
+#define MAX_FLOW_CONTROL_WAIT_TIME 86400
+  long flow_control_max_wait_time_var;
 
 #define DEFAULT_TRANSACTION_SIZE_LIMIT 150000000
-#define MAX_TRANSACTION_SIZE_LIMIT 2147483647
+#define MAX_TRANSACTION_SIZE_LIMIT 17179869183
 #define MIN_TRANSACTION_SIZE_LIMIT 0
   /** Base variable that feeds the value to an atomic variable */
   ulong transaction_size_limit_base_var;
+  ulong request_time_threshold_var;
   std::atomic<ulong> transaction_size_limit_var;
 
   char *communication_debug_options_var;
@@ -260,12 +269,17 @@ struct plugin_options_variables {
 
   uint autorejoin_tries_var;
 
+  uint zone_id_var;
+  bool zone_id_sync_mode_var;
+
   ulong timeout_on_unreachable_var;
 
 #define DEFAULT_MEMBER_WEIGHT 50
 #define MAX_MEMBER_WEIGHT 100
 #define MIN_MEMBER_WEIGHT 0
   uint member_weight_var;
+
+  uint applier_batch_size_threshold_var;
 
   long flow_control_min_quota_var;
   long flow_control_min_recovery_quota_var;
@@ -274,6 +288,7 @@ struct plugin_options_variables {
   int flow_control_period_var;
   int flow_control_hold_percent_var;
   int flow_control_release_percent_var;
+  int broadcast_gtid_executed_period_var;
 
   ulonglong clone_threshold_var;
 
@@ -293,8 +308,6 @@ struct plugin_options_variables {
       2, "communication_stack_typelib_t", communication_stack_source_values,
       nullptr};
   ulong communication_stack_var;
-
-  bool allow_single_leader_var{false};
 };
 
 #endif /* PLUGIN_VARIABLES_INCLUDE */

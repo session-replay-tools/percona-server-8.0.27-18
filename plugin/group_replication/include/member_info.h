@@ -141,14 +141,20 @@ class Group_member_info : public Plugin_gcs_message {
     // Length of the payload item: variable
     PIT_RECOVERY_ENDPOINTS = 20,
 
-    // Length of the payload item: variable
-    PIT_VIEW_CHANGE_UUID = 21,
+    // Length of the payload item: 1 bytes
+    PIT_ZONE_ID = 21,
 
-    // Length of the paylod item: 1 byte
-    PIT_ALLOW_SINGLE_LEADER = 22,
+    // Length of the payload item: 1 bytes
+    PIT_FAST_MODE = 22,
+
+    // Length of the payload item: 1 bytes
+    PIT_ZONE_ID_SYNC_MODE = 23,
+
+    // Length of the payload item: variable
+    PIT_VIEW_CHANGE_UUID = 24,
 
     // No valid type codes can appear after this one.
-    PIT_MAX = 23
+    PIT_MAX = 25
   };
 
   /*
@@ -174,6 +180,7 @@ class Group_member_info : public Plugin_gcs_message {
   typedef enum {
     MEMBER_ROLE_PRIMARY = 1,
     MEMBER_ROLE_SECONDARY,
+    MEMBER_ROLE_ARBITRATOR,
     MEMBER_ROLE_END
   } Group_member_role;
 
@@ -203,8 +210,6 @@ class Group_member_info : public Plugin_gcs_message {
     @param[in] recovery_endpoints_arg                 recovery endpoints
     @param[in] view_change_uuid_arg                   view change uuid
     advertised
-    @param[in] allow_single_leader                    flag indicating whether or
-    not to use single-leader behavior
    */
   Group_member_info(const char *hostname_arg, uint port_arg,
                     const char *uuid_arg, int write_set_extraction_algorithm,
@@ -217,8 +222,10 @@ class Group_member_info : public Plugin_gcs_message {
                     bool has_enforces_update_everywhere_checks,
                     uint member_weight_arg, uint lower_case_table_names_arg,
                     bool default_table_encryption_arg,
-                    const char *recovery_endpoints_arg,
-                    const char *view_change_uuid_arg, bool allow_single_leader,
+                    const char *recovery_endpoints_arg, int zone_id_arg,
+                    bool zone_id_sync_mode_arg,
+                    int single_primary_fast_mode_arg,
+                    const char *view_change_uuid_arg,
                     PSI_mutex_key psi_mutex_key_arg =
                         key_GR_LOCK_group_member_info_update_lock);
 
@@ -270,8 +277,6 @@ class Group_member_info : public Plugin_gcs_message {
     @param[in] recovery_endpoints_arg                 recovery endpoints
     advertised
     @param[in] view_change_uuid_arg                   view change uuid
-    @param[in] allow_single_leader                    flag indicating whether or
-    not to use single-leader behavior
    */
   void update(const char *hostname_arg, uint port_arg, const char *uuid_arg,
               int write_set_extraction_algorithm,
@@ -284,8 +289,9 @@ class Group_member_info : public Plugin_gcs_message {
               bool has_enforces_update_everywhere_checks,
               uint member_weight_arg, uint lower_case_table_names_arg,
               bool default_table_encryption_arg,
-              const char *recovery_endpoints_arg,
-              const char *view_change_uuid_arg, bool allow_single_leader);
+              const char *recovery_endpoints_arg, int zone_id_arg,
+              bool zone_id_sync_mode_arg, int single_primary_fast_mode_arg,
+              const char *view_change_uuid_arg);
 
   /**
     Update Group_member_info.
@@ -497,6 +503,11 @@ class Group_member_info : public Plugin_gcs_message {
   bool is_unreachable();
 
   /**
+    Return true if this is single primary fast mode
+  */
+  int in_single_primary_fast_mode();
+
+  /**
     Update this member conflict detection to true
    */
   void enable_conflict_detection();
@@ -563,13 +574,16 @@ class Group_member_info : public Plugin_gcs_message {
    */
   std::string get_view_change_uuid();
 
-  bool get_allow_single_leader();
-
   /**
     Save member view change uuid
     @param view_change_cnf uuid to be used on change views or "AUTOMATIC"
    */
   void set_view_change_uuid(const char *view_change_cnf);
+
+  int get_zone_id();
+  void set_zone_id(int id);
+  bool get_zone_id_sync_mode();
+  void set_zone_id_sync_mode(bool mode);
 
  protected:
   void encode_payload(std::vector<unsigned char> *buffer) const override;
@@ -613,8 +627,10 @@ class Group_member_info : public Plugin_gcs_message {
   bool group_action_running;
   bool primary_election_running;
   std::string recovery_endpoints;
+  int zone_id;
+  bool zone_id_sync_mode;
+  int single_primary_fast_mode;
   std::string m_view_change_uuid;
-  bool m_allow_single_leader;
 #ifndef NDEBUG
  public:
   bool skip_encode_default_table_encryption;
@@ -765,7 +781,7 @@ class Group_member_info_manager_interface {
 
     @param[in] uuid        member uuid
    */
-  virtual void set_member_unreachable(const std::string &uuid) = 0;
+  virtual bool set_member_unreachable(const std::string &uuid) = 0;
 
   /**
     Sets the identified member as reachable.
@@ -886,6 +902,7 @@ class Group_member_info_manager_interface {
   */
   virtual bool is_majority_unreachable() = 0;
 
+  virtual bool has_arbitrator_member() = 0;
   /**
     Check if an unreachable member exists
 
@@ -968,7 +985,7 @@ class Group_member_info_manager : public Group_member_info_manager_interface {
                             Group_member_info::Group_member_status new_status,
                             Notification_context &ctx) override;
 
-  void set_member_unreachable(const std::string &uuid) override;
+  bool set_member_unreachable(const std::string &uuid) override;
 
   void set_member_reachable(const std::string &uuid) override;
 
@@ -1002,6 +1019,8 @@ class Group_member_info_manager : public Group_member_info_manager_interface {
   Group_member_info *get_primary_member_info() override;
 
   bool is_majority_unreachable() override;
+
+  bool has_arbitrator_member() override;
 
   bool is_unreachable_member_present() override;
 

@@ -71,6 +71,16 @@ static char *group_replication_set_as_primary(UDF_INIT *, UDF_ARGS *args,
     return result;
   }
 
+  if (is_arbitrator_role()) {
+    const char *return_message =
+        "The node is a arbitrator and could not switch to "
+        "primary node.";
+    size_t return_length = strlen(return_message);
+    strcpy(result, return_message);
+    *length = return_length;
+    return result;
+  }
+
   my_thread_id udf_thread_id = 0;
   if (current_thd) udf_thread_id = current_thd->thread_id();
 
@@ -204,6 +214,16 @@ static char *group_replication_switch_to_single_primary_mode(
     strcpy(result, return_message);
     *length = return_length;
 
+    return result;
+  }
+
+  if (is_arbitrator_role()) {
+    const char *return_message =
+        "The node is a arbitrator and could not switch to "
+        "single-primary mode.";
+    size_t return_length = strlen(return_message);
+    strcpy(result, return_message);
+    *length = return_length;
     return result;
   }
 

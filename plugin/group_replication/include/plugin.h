@@ -55,7 +55,6 @@
 class Autorejoin_thread;
 class Transaction_consistency_manager;
 class Member_actions_handler;
-class Consensus_leaders_handler;
 class Mysql_thread;
 
 // Definition of system var structures
@@ -84,6 +83,16 @@ enum enum_exit_state_action {
   EXIT_STATE_ACTION_READ_ONLY = 0,
   EXIT_STATE_ACTION_ABORT_SERVER,
   EXIT_STATE_ACTION_OFFLINE_MODE
+};
+
+/**
+  @enum_mgr_fast_mode_type
+  @brief fast mode when performing mgr
+*/
+enum enum_mgr_fast_mode_type {
+  MGR_FAST_MODE_NEVER = 0,
+  MGR_FAST_MODE_WITH_PARALLEL_REPLAY,
+  MGR_FAST_MODE_WITHOUT_PARALLEL_REPLAY
 };
 
 /**
@@ -181,7 +190,6 @@ extern Compatibility_module *compatibility_mgr;
 extern Group_partition_handling *group_partition_handler;
 extern Blocked_transaction_handler *blocked_transaction_handler;
 extern Remote_clone_handler *remote_clone_handler;
-extern Consensus_leaders_handler *consensus_leaders_handler;
 // Latch used as the control point of the event driven
 // management of the transactions.
 extern Wait_ticket<my_thread_id> *transactions_latch;
@@ -191,6 +199,7 @@ extern SERVICE_TYPE_NO_CONST(mysql_runtime_error) * mysql_runtime_error_service;
 bool server_engine_initialized();
 void *get_plugin_pointer();
 mysql_mutex_t *get_plugin_running_lock();
+mysql_mutex_t *get_plugin_applier_module_lock();
 Plugin_waitlock *get_plugin_online_lock();
 int initialize_plugin_and_join(enum_plugin_con_isolation sql_api_isolation,
                                Delayed_initialization_thread *delayed_init_thd);
@@ -201,6 +210,7 @@ int terminate_plugin_modules(gr_modules::mask modules_to_terminate,
 void register_server_reset_master();
 bool get_allow_local_lower_version_join();
 ulong get_transaction_size_limit();
+ulong get_request_time_threshold();
 bool is_plugin_waiting_to_set_server_read_mode();
 bool check_async_channel_running_on_secondary();
 void set_enforce_update_everywhere_checks(bool option);
@@ -214,7 +224,7 @@ bool is_autorejoin_enabled();
 uint get_number_of_autorejoin_tries();
 ulonglong get_rejoin_timeout();
 void declare_plugin_cloning(bool is_running);
-bool get_allow_single_leader();
+
 /**
   Encapsulates the logic necessary to attempt a rejoin, i.e. gracefully leave
   the group, terminate GCS infrastructure, terminate auto-rejoin relevant plugin
@@ -232,23 +242,29 @@ void enable_server_shutdown_status();
 bool get_server_shutdown_status();
 void set_plugin_is_setting_read_mode(bool value);
 bool get_plugin_is_setting_read_mode();
+bool get_majority_after_mode_var();
 const char *get_group_name_var();
 const char *get_view_change_uuid_var();
 ulong get_exit_state_action_var();
 ulong get_flow_control_mode_var();
 long get_flow_control_certifier_threshold_var();
 long get_flow_control_applier_threshold_var();
+long get_flow_control_replay_lag_behind_var();
+long get_flow_control_max_wait_time_var();
 long get_flow_control_min_quota_var();
+long get_applier_batch_size_threshold_var();
 long get_flow_control_min_recovery_quota_var();
 long get_flow_control_max_quota_var();
 int get_flow_control_member_quota_percent_var();
 int get_flow_control_period_var();
 int get_flow_control_hold_percent_var();
 int get_flow_control_release_percent_var();
+int get_broadcast_gtid_executed_period_var();
 ulong get_components_stop_timeout_var();
 ulong get_communication_stack_var();
 void set_error_state_due_to_error_during_autorejoin();
 bool get_error_state_due_to_error_during_autorejoin();
+bool is_arbitrator_role();
 
 // Plugin public methods
 int plugin_group_replication_init(MYSQL_PLUGIN plugin_info);
@@ -271,6 +287,8 @@ bool plugin_get_group_member_stats(
     uint index,
     const GROUP_REPLICATION_GROUP_MEMBER_STATS_CALLBACKS &callbacks);
 uint plugin_get_group_members_number();
+void plugin_update_zone_id_for_communication_node(const char *ip, int zone_id,
+                                                  bool zone_id_sync_mode);
 int plugin_group_replication_leave_group();
 
 /**

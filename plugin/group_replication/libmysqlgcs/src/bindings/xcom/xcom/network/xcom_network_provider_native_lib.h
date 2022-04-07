@@ -52,6 +52,7 @@ class Xcom_network_provider_library {
   static int allowlist_socket_accept(int fd, site_def const *xcom_config);
   static result gcs_shut_close_socket(int *sock);
   static result announce_tcp(xcom_port port);
+  bool retrieve_addr_from_fd(int fd, bool client, char *ip, int *port);
 
  private:
   static void init_server_addr(struct sockaddr **sock_addr, socklen_t *sock_len,

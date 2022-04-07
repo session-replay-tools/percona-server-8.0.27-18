@@ -147,6 +147,9 @@ using std::string;
 
 #define MY_OFF_T_UNDEF (~(my_off_t)0UL)
 
+#define MAX_EVENT_BUFFER_SIZE 4194304
+#define MAX_EVENT_BUFFER_NUM 100
+
 /*
   Constants required for the limit unsafe warnings suppression
  */
@@ -7067,7 +7070,20 @@ bool MYSQL_BIN_LOG::write_buffer(uchar *buf, uint len, Master_info *mi) {
   bool error = false;
   if (m_binlog_file->write(pointer_cast<const uchar *>(buf), len) == 0) {
     bytes_written += len;
-    error = after_write_to_relay_log(mi);
+    mi->total_events++;
+    if (!mi->io_buffered) {
+      error = after_write_to_relay_log(mi);
+      mi->io_buffered_cnt = 0;
+    } else {
+      mi->io_buffered_cnt++;
+      if (mi->io_buffered_cnt >= MAX_EVENT_BUFFER_NUM ||
+          len >= MAX_EVENT_BUFFER_SIZE) {
+        error = after_write_to_relay_log(mi);
+        mi->io_buffered_cnt = 0;
+      } else {
+        mi->total_buffered_events++;
+      }
+    }
   } else {
     mi->report(ERROR_LEVEL, ER_SLAVE_RELAY_LOG_WRITE_FAILURE,
                ER_THD(current_thd, ER_SLAVE_RELAY_LOG_WRITE_FAILURE),

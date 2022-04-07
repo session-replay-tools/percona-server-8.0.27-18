@@ -240,6 +240,7 @@ std::unique_ptr<Network_connection> Xcom_network_provider::open_connection(
   }
   {
     int peer = 0;
+    int same_ip;
     /* Sanity check before return */
     SET_OS_ERR(0);
 
@@ -250,6 +251,15 @@ std::unique_ptr<Network_connection> Xcom_network_provider::open_connection(
         xcom_getpeername(fd.val, (struct sockaddr *)&another_addr, &addr_size);
     ret.funerr = to_errno(GET_OS_ERR);
     if (peer >= 0) {
+      if (!check_tcp_connection_valid(fd.val, &same_ip)) {
+        this->close_connection({fd.val
+#ifndef XCOM_WITHOUT_OPENSSL
+                                ,
+                                nullptr
+#endif
+        });
+        goto end;
+      }
       ret = set_nodelay(fd.val);
       if (ret.val < 0) {
         this->close_connection({fd.val

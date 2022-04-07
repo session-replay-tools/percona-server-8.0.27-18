@@ -39,7 +39,6 @@
 #include "plugin/group_replication/include/perfschema/pfs.h"
 #include "plugin/group_replication/include/pipeline_stats.h"
 #include "plugin/group_replication/include/plugin.h"
-#include "plugin/group_replication/include/plugin_handlers/consensus_leaders_handler.h"
 #include "plugin/group_replication/include/plugin_handlers/member_actions_handler.h"
 #include "plugin/group_replication/include/plugin_variables.h"
 #include "plugin/group_replication/include/plugin_variables/recovery_endpoints.h"
@@ -141,8 +140,6 @@ Compatibility_module *compatibility_mgr = nullptr;
 SERVICE_TYPE_NO_CONST(mysql_runtime_error) *mysql_runtime_error_service =
     nullptr;
 
-Consensus_leaders_handler *consensus_leaders_handler = nullptr;
-
 /* Performance schema module */
 static gr::perfschema::Perfschema_module *perfschema_module = nullptr;
 static bool initialize_perfschema_module();
@@ -232,6 +229,9 @@ static const char *get_ip_allowlist() {
 void *get_plugin_pointer() { return lv.plugin_info_ptr; }
 
 mysql_mutex_t *get_plugin_running_lock() { return &lv.plugin_running_mutex; }
+mysql_mutex_t *get_plugin_applier_module_lock() {
+  return &lv.plugin_applier_module_mutex;
+}
 
 bool plugin_is_group_replication_running() {
   return lv.group_replication_running;
@@ -289,6 +289,8 @@ ulong get_exit_state_action_var() { return ov.exit_state_action_var; }
 
 ulong get_flow_control_mode_var() { return ov.flow_control_mode_var; }
 
+bool get_majority_after_mode_var() { return ov.majority_after_mode_var; }
+
 long get_flow_control_certifier_threshold_var() {
   return ov.flow_control_certifier_threshold_var;
 }
@@ -297,7 +299,21 @@ long get_flow_control_applier_threshold_var() {
   return ov.flow_control_applier_threshold_var;
 }
 
+long get_flow_control_replay_lag_behind_var() {
+  return ov.flow_control_replay_lag_behind_var;
+}
+
+long get_flow_control_max_wait_time_var() {
+  return ov.flow_control_max_wait_time_var;
+}
+
+bool is_arbitrator_role() { return ov.arbitrator_role_var; }
+
 long get_flow_control_min_quota_var() { return ov.flow_control_min_quota_var; }
+
+long get_applier_batch_size_threshold_var() {
+  return ov.applier_batch_size_threshold_var;
+}
 
 long get_flow_control_min_recovery_quota_var() {
   return ov.flow_control_min_recovery_quota_var;
@@ -317,6 +333,10 @@ int get_flow_control_hold_percent_var() {
 
 int get_flow_control_release_percent_var() {
   return ov.flow_control_release_percent_var;
+}
+
+int get_broadcast_gtid_executed_period_var() {
+  return ov.broadcast_gtid_executed_period_var;
 }
 
 ulong get_components_stop_timeout_var() {
@@ -339,17 +359,10 @@ uint get_number_of_autorejoin_tries() { return ov.autorejoin_tries_var; }
 
 ulonglong get_rejoin_timeout() { return lv.rejoin_timeout; }
 
-bool get_allow_single_leader() {
-  if (lv.allow_single_leader_latch.first)
-    return lv.allow_single_leader_latch.second;
-  else
-    return ov.allow_single_leader_var;
-}
-
 /**
  * @brief Callback implementation of
- * handle_group_replication_incoming_connection. This is the entry point for
- * new MySQL connections that are directed to GCS
+ * handle_group_replication_incoming_connection. This is the entry point for new
+ * MySQL connections that are directed to GCS
  *
  * @param thd     THD object of the connection
  * @param fd      File descriptor of the connections
@@ -480,6 +493,13 @@ bool plugin_get_group_members(
                                 channel_name);
 }
 
+void plugin_update_zone_id_for_communication_node(const char *ip, int zone_id,
+                                                  bool zone_id_sync_mode) {
+  if (gcs_module) {
+    gcs_module->update_zone_id_through_gcs(ip, zone_id, zone_id_sync_mode);
+  }
+}
+
 /*
   If the local member is already OFFLINE but still has the previous
   membership because is waiting for the leave view, do not report
@@ -501,8 +521,8 @@ bool plugin_get_group_member_stats(
     const GROUP_REPLICATION_GROUP_MEMBER_STATS_CALLBACKS &callbacks) {
   char *channel_name = applier_module_channel_name;
 
-  return get_group_member_stats(index, callbacks, group_member_mgr,
-                                applier_module, gcs_module, channel_name);
+  return get_group_member_stats(index, callbacks, group_member_mgr, gcs_module,
+                                channel_name);
 }
 
 int plugin_group_replication_start(char **error_message) {
@@ -634,9 +654,6 @@ int plugin_group_replication_start(char **error_message) {
 
   // Reset previous ERROR state causes.
   lv.error_state_due_to_error_during_autorejoin = false;
-
-  // Reset the single-leader latch flag
-  lv.allow_single_leader_latch.first = false;
 
   // Reset the coordinator in case there was a previous stop.
   group_action_coordinator->reset_coordinator_process();
@@ -936,27 +953,35 @@ int configure_group_member_manager() {
     uuid = const_cast<char *>("cccccccc-cccc-cccc-cccc-cccccccccccc");
   };);
 
+  Group_member_info::Group_member_role mem_role =
+      Group_member_info::MEMBER_ROLE_SECONDARY;
+  if (is_arbitrator_role()) {
+    mem_role = Group_member_info::MEMBER_ROLE_ARBITRATOR;
+  }
+
   // Initialize or update local_member_info.
   if (local_member_info != nullptr) {
     local_member_info->update(
         hostname, port, uuid, lv.write_set_extraction_algorithm,
         gcs_local_member_identifier, Group_member_info::MEMBER_OFFLINE,
         local_member_plugin_version, ov.gtid_assignment_block_size_var,
-        Group_member_info::MEMBER_ROLE_SECONDARY, ov.single_primary_mode_var,
+        mem_role, ov.single_primary_mode_var,
         ov.enforce_update_everywhere_checks_var, ov.member_weight_var,
         lv.gr_lower_case_table_names, lv.gr_default_table_encryption,
-        ov.advertise_recovery_endpoints_var, ov.view_change_uuid_var,
-        get_allow_single_leader());
+        ov.advertise_recovery_endpoints_var, ov.zone_id_var,
+        ov.zone_id_sync_mode_var, ov.single_primary_fast_mode_var,
+        ov.view_change_uuid_var);
   } else {
     local_member_info = new Group_member_info(
         hostname, port, uuid, lv.write_set_extraction_algorithm,
         gcs_local_member_identifier, Group_member_info::MEMBER_OFFLINE,
         local_member_plugin_version, ov.gtid_assignment_block_size_var,
-        Group_member_info::MEMBER_ROLE_SECONDARY, ov.single_primary_mode_var,
+        mem_role, ov.single_primary_mode_var,
         ov.enforce_update_everywhere_checks_var, ov.member_weight_var,
         lv.gr_lower_case_table_names, lv.gr_default_table_encryption,
-        ov.advertise_recovery_endpoints_var, ov.view_change_uuid_var,
-        get_allow_single_leader());
+        ov.advertise_recovery_endpoints_var, ov.zone_id_var,
+        ov.zone_id_sync_mode_var, ov.single_primary_fast_mode_var,
+        ov.view_change_uuid_var);
   }
 
 #ifndef NDEBUG
@@ -1067,23 +1092,22 @@ int configure_compatibility_manager() {
 int leave_group_and_terminate_plugin_modules(
     gr_modules::mask modules_to_terminate, char **error_message) {
   /*
-    We acquire the plugin_modules_termination_mutex lock at this point in
-    time, before attempting to leave the group or terminate the plugin
-    modules.
+    We acquire the plugin_modules_termination_mutex lock at this point in time,
+    before attempting to leave the group or terminate the plugin modules.
 
     This warrants a more in-depth explanation of the life-cycle of
     plugin_modules_termination_mutex.
 
-    By calling terminate_plugin_modules() with gr_modules::all_modules, you
-    will terminate all plugin modules. One of those modules happens to be the
+    By calling terminate_plugin_modules() with gr_modules::all_modules, you will
+    terminate all plugin modules. One of those modules happens to be the
     Autorejoin_thread. The termination of the Autorejoin_thread plugin module
     will first terminate the thread.
-    The auto-rejoin process could already be undergoing. During the
-    auto-rejoin process, in attempt_rejoin(), there will be a call to
-    terminate_plugin_modules() as well (albeit with a different bitmask).
-    Since we can't terminate the thread during attempt_rejoin(), only after
-    it, we could have concurrent calls to terminate_plugin_modules(). Thus the
-    need for a critical section around it.
+    The auto-rejoin process could already be undergoing. During the auto-rejoin
+    process, in attempt_rejoin(), there will be a call to
+    terminate_plugin_modules() as well (albeit with a different bitmask). Since
+    we can't terminate the thread during attempt_rejoin(), only after it, we
+    could have concurrent calls to terminate_plugin_modules(). Thus the need for
+    a critical section around it.
 
     Also note that we are locking even before we call leave_group(). This is
     just to make sure that we don't start an auto-rejoin just before we
@@ -1377,6 +1401,14 @@ int initialize_plugin_modules(gr_modules::mask modules_to_init) {
     // we can only start the applier if the log has been initialized
     if (configure_and_start_applier_module())
       return GROUP_REPLICATION_REPLICATION_APPLIER_INIT_ERROR;
+    DBUG_SIGNAL_WAIT_FOR(current_thd,
+                         "group_replication_status_when_terminal_applier",
+                         "reach_before_terminate_applier_sync",
+                         "end_before_terminate_applier_sync");
+    if (DBUG_EVALUATE_IF("group_replication_status_when_terminal_applier", true,
+                         false)) {
+      return 1;
+    }
   }
 
   /*
@@ -1718,9 +1750,9 @@ bool attempt_rejoin() {
   /*
     The first step is to issue a GCS leave() operation. This is done because
     the join() operation will assume that the GCS layer is not initiated and
-    will try to reinitialize everything. Thus, we will simply teardown and
-    setup both the GCS layer and the group membership dependent components on
-    the GR side between each retry.
+    will try to reinitialize everything. Thus, we will simply teardown and setup
+    both the GCS layer and the group membership dependent components on the GR
+    side between each retry.
   */
   Plugin_gcs_view_modification_notifier vc_notifier;
   vc_notifier.start_view_modification();
@@ -1747,6 +1779,8 @@ bool attempt_rejoin() {
     terminated in the STOP GROUP_REPLICATION command handling thread and we
     leave gracefully.
   */
+  DBUG_SIGNAL_WAIT_FOR(current_thd, "group_replication_rejoin_when_get_stats_1",
+                       "reach_rejoin_sync_1", "end_rejoin_sync_1");
   error = mysql_mutex_trylock(&lv.plugin_modules_termination_mutex);
   if (!error) {
     error = terminate_plugin_modules(modules_mask, nullptr, true);
@@ -1905,6 +1939,8 @@ int plugin_group_replication_init(MYSQL_PLUGIN plugin_info) {
 
   mysql_mutex_init(key_GR_LOCK_plugin_running, &lv.plugin_running_mutex,
                    MY_MUTEX_INIT_FAST);
+  mysql_mutex_init(key_GR_LOCK_plugin_running, &lv.plugin_applier_module_mutex,
+                   MY_MUTEX_INIT_FAST);
   mysql_mutex_init(key_GR_LOCK_force_members_running,
                    &lv.force_members_running_mutex, MY_MUTEX_INIT_FAST);
 
@@ -1982,8 +2018,6 @@ int plugin_group_replication_init(MYSQL_PLUGIN plugin_info) {
       new Group_action_coordinator(ov.components_stop_timeout_var);
   group_action_coordinator->register_coordinator_observers();
   member_actions_handler = new Member_actions_handler();
-  consensus_leaders_handler =
-      new Consensus_leaders_handler{*group_events_observation_manager};
 
   bool const error = register_udfs();
   if (error) return 1;
@@ -2079,11 +2113,6 @@ int plugin_group_replication_deinit(void *p) {
     autorejoin_module = nullptr;
   }
 
-  if (consensus_leaders_handler) {
-    delete consensus_leaders_handler;
-    consensus_leaders_handler = nullptr;
-  }
-
   if (group_action_coordinator) {
     group_action_coordinator->stop_coordinator_process(true, true);
     group_action_coordinator->unregister_coordinator_observers();
@@ -2153,6 +2182,7 @@ int plugin_group_replication_deinit(void *p) {
   transactions_latch = nullptr;
 
   mysql_mutex_destroy(&lv.plugin_running_mutex);
+  mysql_mutex_destroy(&lv.plugin_applier_module_mutex);
   mysql_mutex_destroy(&lv.force_members_running_mutex);
   mysql_mutex_destroy(&lv.plugin_modules_termination_mutex);
 
@@ -2255,6 +2285,7 @@ void declare_plugin_cloning(bool is_running) {
 int configure_and_start_applier_module() {
   DBUG_TRACE;
 
+  MUTEX_LOCK(lock, &lv.plugin_applier_module_mutex);
   int error = 0;
 
   Replication_thread_api applier_channel(applier_module_channel_name);
@@ -2327,6 +2358,7 @@ void reset_auto_increment_handler_values(bool force_reset) {
 }
 
 int terminate_applier_module() {
+  MUTEX_LOCK(lock, &lv.plugin_applier_module_mutex);
   int error = 0;
   if (applier_module != nullptr) {
     if (!applier_module->terminate_applier_thread())  // all goes fine
@@ -2337,6 +2369,11 @@ int terminate_applier_module() {
       error = GROUP_REPLICATION_APPLIER_STOP_TIMEOUT;
     }
   }
+  DBUG_SIGNAL_WAIT_FOR(current_thd, "group_replication_rejoin_when_get_stats_2",
+                       "reach_rejoin_sync_2", "end_rejoin_sync_2");
+  DBUG_SIGNAL_WAIT_FOR(
+      current_thd, "group_replication_status_when_terminal_applier",
+      "reach_after_terminate_applier_sync", "end_after_terminate_applier_sync");
   return error;
 }
 
@@ -2373,6 +2410,8 @@ int build_gcs_parameters(Gcs_interface_parameters &gcs_module_parameters) {
                                       member_expel_timeout_stream_buffer.str());
   gcs_module_parameters.add_parameter(
       "xcom_cache_size", std::to_string(ov.message_cache_size_var));
+  gcs_module_parameters.add_parameter(
+      "xcom_flp_timeout", std::to_string(ov.communication_flp_timeout_var));
 
   gcs_module_parameters.add_parameter(
       "communication_stack", std::to_string(ov.communication_stack_var));
@@ -2578,10 +2617,10 @@ int start_group_communication() {
 }
 
 bool check_async_channel_running_on_secondary() {
-  /* To stop group replication to start on secondary member with single
-    primary- mode, when any async channels are running, we verify whether
-    member is not bootstrapping. As only when the member is bootstrapping, it
-    can be the primary leader on a single primary member context.
+  /* To stop group replication to start on secondary member with single primary-
+     mode, when any async channels are running, we verify whether member is not
+    bootstrapping. As only when the member is bootstrapping, it can be the
+    primary leader on a single primary member context.
   */
   if (ov.single_primary_mode_var && !ov.bootstrap_group_var &&
       !lv.plugin_is_auto_starting_on_boot) {
@@ -2639,8 +2678,8 @@ int initialize_recovery_module() {
   recovery_module->set_recovery_zstd_compression_level(
       ov.recovery_zstd_compression_level_var);
 
-  // on case of the threads is locked and not able to terminate, change
-  // timeout to fail faster
+  // on case of the threads is locked and not able to terminate, change timeout
+  // to fail faster
   recovery_module->set_stop_wait_timeout(1);
   int error = recovery_module->check_recovery_thread_status();
   recovery_module->set_stop_wait_timeout(get_components_stop_timeout_var());
@@ -2674,6 +2713,8 @@ ulong get_transaction_size_limit() {
   DBUG_TRACE;
   return ov.transaction_size_limit_var;
 }
+
+ulong get_request_time_threshold() { return ov.request_time_threshold_var; }
 
 bool is_plugin_waiting_to_set_server_read_mode() {
   DBUG_TRACE;
@@ -2773,6 +2814,17 @@ static int check_if_server_properly_configured() {
     LogPluginErr(
         ERROR_LEVEL,
         ER_GRP_RPL_SINGLE_PRIM_MODE_NOT_ALLOWED_WITH_UPDATE_EVERYWHERE);
+    return 1;
+  }
+
+  if ((!ov.single_primary_mode_var) && ov.single_primary_fast_mode_var) {
+    LogPluginErr(ERROR_LEVEL,
+                 ER_GRP_RPL_MULTI_PRIM_MODE_NOT_ALLOWED_WITH_FAST_MODE);
+    return 1;
+  }
+
+  if (ov.bootstrap_group_var && ov.arbitrator_role_var) {
+    LogPluginErr(ERROR_LEVEL, ER_GRP_RPL_ARBITRATOR_IS_INITIALIZED);
     return 1;
   }
 
@@ -2879,8 +2931,7 @@ static int check_group_name_string(const char *str, bool is_var_update) {
           mysql_runtime_error_service,
           ER_WRONG_VALUE_FOR_VAR_PLUS_ACTIONABLE_PART, 0,
           "group_replication_group_name", str,
-          "The value is the same as group_replication_view_change_uuid. "
-          "Please "
+          "The value is the same as group_replication_view_change_uuid. Please "
           "change group_replication_view_change_uuid to AUTOMATIC");
     }
     return 1;
@@ -3493,11 +3544,11 @@ static int check_communication_max_message_size(MYSQL_THD, SYS_VAR *,
 
   if (plugin_is_group_replication_running()) {
     mysql_mutex_unlock(&lv.plugin_running_mutex);
-    my_message(ER_GROUP_REPLICATION_RUNNING,
-               "The group_replication_communication_max_message_size option "
-               "cannot be "
-               "set while Group Replication is running",
-               MYF(0));
+    my_message(
+        ER_GROUP_REPLICATION_RUNNING,
+        "The group_replication_communication_max_message_size option cannot be "
+        "set while Group Replication is running",
+        MYF(0));
     return 1;
   }
 
@@ -3588,11 +3639,11 @@ static int check_gtid_assignment_block_size(MYSQL_THD, SYS_VAR *, void *save,
   value->val_int(value, &in_val);
 
   if (plugin_is_group_replication_running()) {
-    my_message(ER_GROUP_REPLICATION_RUNNING,
-               "The group_replication_gtid_assignment_block size cannot be "
-               "set while "
-               "Group Replication is running",
-               MYF(0));
+    my_message(
+        ER_GROUP_REPLICATION_RUNNING,
+        "The group_replication_gtid_assignment_block size cannot be set while "
+        "Group Replication is running",
+        MYF(0));
     return 1;
   }
 
@@ -3678,8 +3729,7 @@ static int check_single_primary_mode(MYSQL_THD, SYS_VAR *, void *save,
     my_message(
         ER_GROUP_REPLICATION_RUNNING,
         "Cannot modify group replication mode by changing "
-        "group_replication_single_primary_mode system variable. Please use "
-        "the "
+        "group_replication_single_primary_mode system variable. Please use the "
         "group_replication_switch_to_single_primary_mode([member_uuid]) OR "
         "group_replication_switch_to_multi_primary_mode() UDF.",
         MYF(0));
@@ -3696,7 +3746,79 @@ static int check_single_primary_mode(MYSQL_THD, SYS_VAR *, void *save,
     return 1;
   }
 
+  if ((!single_primary_mode_val) && ov.single_primary_fast_mode_var) {
+    mysql_mutex_unlock(&lv.plugin_running_mutex);
+    my_message(ER_WRONG_VALUE_FOR_VAR,
+               "Cannot turn OFF group_replication_single_primary_mode while "
+               "group_replication_single_primary_fast_mode is "
+               "enabled.",
+               MYF(0));
+    return 1;
+  }
+
   *(bool *)save = single_primary_mode_val;
+
+  mysql_mutex_unlock(&lv.plugin_running_mutex);
+  return 0;
+}
+
+static int check_majority_after_mode(MYSQL_THD, SYS_VAR *, void *save,
+                                     struct st_mysql_value *value) {
+  DBUG_TRACE;
+
+  bool enforce_majojrity_after_checks_val;
+
+  if (!get_bool_value_using_type_lib(value, enforce_majojrity_after_checks_val))
+    return 1;
+
+  if (plugin_running_mutex_trylock()) return 1;
+
+  if (plugin_is_group_replication_running()) {
+    mysql_mutex_unlock(&lv.plugin_running_mutex);
+    my_message(ER_GROUP_REPLICATION_RUNNING,
+               "Cannot turn ON/OFF "
+               "group_replication_majority_after_mode while "
+               "Group Replication is running.",
+               MYF(0));
+    return 1;
+  }
+
+  *(bool *)save = enforce_majojrity_after_checks_val;
+
+  mysql_mutex_unlock(&lv.plugin_running_mutex);
+  return 0;
+}
+
+static int check_single_primary_fast_mode(MYSQL_THD, SYS_VAR *, void *save,
+                                          struct st_mysql_value *value) {
+  DBUG_TRACE;
+
+  if (plugin_running_mutex_trylock()) return 1;
+
+  if (plugin_is_group_replication_running()) {
+    mysql_mutex_unlock(&lv.plugin_running_mutex);
+    my_message(ER_GROUP_REPLICATION_RUNNING,
+               "Cannot change "
+               "group_replication_single_primary_fast_mode while "
+               "Group Replication is running.",
+               MYF(0));
+    return 1;
+  }
+
+  longlong in_val = 0;
+  value->val_int(value, &in_val);
+
+  if ((!ov.single_primary_mode_var) && in_val) {
+    mysql_mutex_unlock(&lv.plugin_running_mutex);
+    my_message(ER_WRONG_VALUE_FOR_VAR,
+               "Cannot set "
+               "group_replication_single_primary_fast_mode while "
+               "group_replication_single_primary_mode is false.",
+               MYF(0));
+    return 1;
+  }
+
+  *(int *)save = in_val;
 
   mysql_mutex_unlock(&lv.plugin_running_mutex);
   return 0;
@@ -3922,6 +4044,67 @@ static void update_autorejoin_tries(MYSQL_THD, SYS_VAR *, void *var_ptr,
   mysql_mutex_unlock(&lv.plugin_running_mutex);
 }
 
+static int check_zone_id(MYSQL_THD, SYS_VAR *, void *save,
+                         struct st_mysql_value *value) {
+  DBUG_TRACE;
+  if (plugin_running_mutex_trylock()) return 1;
+  if (plugin_is_group_replication_running()) {
+    mysql_mutex_unlock(&lv.plugin_running_mutex);
+    my_message(ER_GROUP_REPLICATION_RUNNING,
+               "Cannot change group_replication_zone_id while "
+               "Group Replication is running.",
+               MYF(0));
+    return 1;
+  }
+
+  longlong in_val = 0;
+  value->val_int(value, &in_val);
+  if (in_val < 0 || in_val > 8) {
+    mysql_mutex_unlock(&lv.plugin_running_mutex);
+    return 1;
+  }
+  *(uint *)save = in_val;
+  mysql_mutex_unlock(&lv.plugin_running_mutex);
+  return 0;
+}
+
+static void update_zone_id(MYSQL_THD, SYS_VAR *, void *var_ptr,
+                           const void *save) {
+  DBUG_TRACE;
+
+  if (plugin_running_mutex_trylock()) return;
+
+  uint in_val = *static_cast<const uint *>(save);
+  *static_cast<uint *>(var_ptr) = in_val;
+
+  ov.zone_id_var = in_val;
+
+  mysql_mutex_unlock(&lv.plugin_running_mutex);
+}
+
+static int check_zone_id_sync_mode(MYSQL_THD, SYS_VAR *, void *save,
+                                   struct st_mysql_value *value) {
+  DBUG_TRACE;
+
+  bool in_val;
+  if (!get_bool_value_using_type_lib(value, in_val)) return 1;
+
+  if (plugin_running_mutex_trylock()) return 1;
+  if (plugin_is_group_replication_running()) {
+    mysql_mutex_unlock(&lv.plugin_running_mutex);
+    my_message(ER_GROUP_REPLICATION_RUNNING,
+               "Cannot change "
+               "group_replication_zone_id_sync_mode while "
+               "Group Replication is running.",
+               MYF(0));
+    return 1;
+  }
+
+  *(bool *)save = in_val;
+  mysql_mutex_unlock(&lv.plugin_running_mutex);
+  return 0;
+}
+
 static int check_message_cache_size(MYSQL_THD, SYS_VAR *var, void *save,
                                     struct st_mysql_value *value) {
   DBUG_TRACE;
@@ -3970,6 +4153,58 @@ static void update_message_cache_size(MYSQL_THD, SYS_VAR *, void *var_ptr,
 
   if (gcs_module != nullptr) {
     gcs_module->set_xcom_cache_size(in_val);
+  }
+
+  mysql_mutex_unlock(&lv.plugin_running_mutex);
+}
+
+static int check_flp_timeout(MYSQL_THD, SYS_VAR *var, void *save,
+                             struct st_mysql_value *value) {
+  DBUG_TRACE;
+
+  if (plugin_running_mutex_trylock()) return 1;
+
+  longlong orig;
+  ulonglong in_val;
+  bool is_negative = false;
+
+  value->val_int(value, &orig);
+  in_val = orig;
+
+  /* Check if value is negative */
+  if (!value->is_unsigned(value) && orig < 0) {
+    is_negative = true;
+  }
+
+  if (is_negative || in_val > MAX_FLP_TIMEOUT || in_val < MIN_FLP_TIMEOUT) {
+    std::stringstream ss;
+    ss << "The value "
+       << (is_negative ? std::to_string(orig) : std::to_string(in_val))
+       << " is not within the range of accepted values for the option "
+       << var->name << ". The value must be between " << MIN_FLP_TIMEOUT
+       << " and " << MAX_FLP_TIMEOUT << " inclusive.";
+    my_message(ER_WRONG_VALUE_FOR_VAR, ss.str().c_str(), MYF(0));
+    mysql_mutex_unlock(&lv.plugin_running_mutex);
+    return 1;
+  }
+
+  *(ulong *)save = (ulong)in_val;
+
+  mysql_mutex_unlock(&lv.plugin_running_mutex);
+  return 0;
+}
+
+static void update_flp_timeout(MYSQL_THD, SYS_VAR *, void *var_ptr,
+                               const void *save) {
+  DBUG_TRACE;
+
+  if (plugin_running_mutex_trylock()) return;
+
+  ulong in_val = *static_cast<const ulong *>(save);
+  *static_cast<ulong *>(var_ptr) = in_val;
+
+  if (gcs_module != nullptr) {
+    gcs_module->set_xcom_flp_timeout(in_val);
   }
 
   mysql_mutex_unlock(&lv.plugin_running_mutex);
@@ -4141,22 +4376,6 @@ static void update_transaction_size_limit(MYSQL_THD, SYS_VAR *, void *var_ptr,
   mysql_mutex_unlock(&lv.plugin_running_mutex);
 }
 
-static void update_allow_single_leader(MYSQL_THD, SYS_VAR *, void *var_ptr,
-                                       const void *save) {
-  DBUG_TRACE;
-
-  if (plugin_is_group_replication_running()) {
-    lv.allow_single_leader_latch.first = true;
-  } else {
-    lv.allow_single_leader_latch.first = false;
-  }
-
-  lv.allow_single_leader_latch.second = ov.allow_single_leader_var;
-  bool allow_single_leader = *static_cast<const bool *>(save);
-  *static_cast<bool *>(var_ptr) = allow_single_leader;
-  ov.allow_single_leader_var = allow_single_leader;
-}
-
 // Base plugin variables
 
 static MYSQL_SYSVAR_STR(group_name,        /* name */
@@ -4195,8 +4414,7 @@ static MYSQL_SYSVAR_STR(
     ov.group_seeds_var, /* var */
     PLUGIN_VAR_OPCMDARG | PLUGIN_VAR_MEMALLOC |
         PLUGIN_VAR_PERSIST_AS_READ_ONLY, /* optional var | malloc string*/
-    "The list of group seeds, comma separated. E.g., "
-    "host1:port1,host2:port2.",
+    "The list of group seeds, comma separated. E.g., host1:port1,host2:port2.",
     nullptr, /* check func*/
     nullptr, /* update func*/
     "");     /* default*/
@@ -4266,6 +4484,19 @@ static MYSQL_SYSVAR_ULONG(
     MIN_MESSAGE_CACHE_SIZE,     /* min */
     MAX_MESSAGE_CACHE_SIZE,     /* max */
     0                           /* block */
+);
+
+static MYSQL_SYSVAR_ULONG(
+    communication_flp_timeout,                             /* name */
+    ov.communication_flp_timeout_var,                      /* var */
+    PLUGIN_VAR_OPCMDARG | PLUGIN_VAR_PERSIST_AS_READ_ONLY, /* optional var */
+    "The communication flp timeout (in seconds) of Group Replication.",
+    check_flp_timeout,   /* check func. */
+    update_flp_timeout,  /* update func. */
+    DEFAULT_FLP_TIMEOUT, /* default */
+    MIN_FLP_TIMEOUT,     /* min */
+    MAX_FLP_TIMEOUT,     /* max */
+    0                    /* block */
 );
 
 // Recovery module variables
@@ -4358,8 +4589,7 @@ static MYSQL_SYSVAR_STR(
     ov.recovery_ssl_key_var, /* var */
     PLUGIN_VAR_OPCMDARG | PLUGIN_VAR_MEMALLOC |
         PLUGIN_VAR_PERSIST_AS_READ_ONLY, /* optional var | malloc string*/
-    "The name of the SSL key file to use for establishing a secure "
-    "connection.",
+    "The name of the SSL key file to use for establishing a secure connection.",
     check_recovery_ssl_option,  /* check func*/
     update_recovery_ssl_option, /* update func*/
     "");                        /* default*/
@@ -4485,8 +4715,7 @@ static MYSQL_SYSVAR_ULONG(
     components_stop_timeout,                               /* name */
     ov.components_stop_timeout_var,                        /* var */
     PLUGIN_VAR_OPCMDARG | PLUGIN_VAR_PERSIST_AS_READ_ONLY, /* optional var */
-    "Timeout in seconds that the plugin waits for each of the components "
-    "when "
+    "Timeout in seconds that the plugin waits for each of the components when "
     "shutting down.",
     check_sysvar_ulong_timeout, /* check func. */
     update_component_timeout,   /* update func. */
@@ -4636,6 +4865,37 @@ static MYSQL_SYSVAR_BOOL(
     true);                     /* default*/
 
 static MYSQL_SYSVAR_BOOL(
+    majority_after_mode,        /* name */
+    ov.majority_after_mode_var, /* var */
+    PLUGIN_VAR_RQCMDARG | PLUGIN_VAR_PERSIST_AS_READ_ONLY,
+    "Instructs the group to adopt majority after mode. Default: TRUE.",
+    check_majority_after_mode, /* check func*/
+    nullptr,                   /* update func*/
+    true);                     /* default*/
+
+static MYSQL_SYSVAR_INT(
+    single_primary_fast_mode,        /* name */
+    ov.single_primary_fast_mode_var, /* var */
+    PLUGIN_VAR_RQCMDARG | PLUGIN_VAR_PERSIST_AS_READ_ONLY,
+    "Instructs the group to adopt single primary fast mode. Default: 0.",
+    check_single_primary_fast_mode,        /* check func. */
+    nullptr,                               /* update func. */
+    MGR_FAST_MODE_NEVER,                   /* default */
+    MGR_FAST_MODE_NEVER,                   /* min */
+    MGR_FAST_MODE_WITHOUT_PARALLEL_REPLAY, /* max */
+    0                                      /* block */
+);
+
+static MYSQL_SYSVAR_BOOL(
+    arbitrator,             /* name */
+    ov.arbitrator_role_var, /* var */
+    PLUGIN_VAR_RQCMDARG | PLUGIN_VAR_READONLY,
+    "Instructs the node to be a pure arbitrator(Default: false)",
+    nullptr, /* check func*/
+    nullptr, /* update func*/
+    false);  /* default*/
+
+static MYSQL_SYSVAR_BOOL(
     enforce_update_everywhere_checks,        /* name */
     ov.enforce_update_everywhere_checks_var, /* var */
     PLUGIN_VAR_OPCMDARG | PLUGIN_VAR_NODEFAULT |
@@ -4673,6 +4933,34 @@ static MYSQL_SYSVAR_LONG(
 );
 
 static MYSQL_SYSVAR_LONG(
+    flow_control_replay_lag_behind,                        /* name */
+    ov.flow_control_replay_lag_behind_var,                 /* var */
+    PLUGIN_VAR_OPCMDARG | PLUGIN_VAR_PERSIST_AS_READ_ONLY, /* optional var */
+    "Specifies the number of waiting seconds that will lag behind the master."
+    "Default: 600",
+    nullptr,                            /* check func. */
+    nullptr,                            /* update func. */
+    600,                                /* default */
+    0,                                  /* min */
+    MAX_FLOW_CONTROL_REPLAY_LAG_BEHIND, /* max */
+    0                                   /* block */
+);
+
+static MYSQL_SYSVAR_LONG(flow_control_max_wait_time,        /* name */
+                         ov.flow_control_max_wait_time_var, /* var */
+                         PLUGIN_VAR_OPCMDARG |
+                             PLUGIN_VAR_PERSIST_AS_READ_ONLY, /* optional var */
+                         "Specifies the max value that will do wait."
+                         "Default: 3600",
+                         nullptr,                    /* check func. */
+                         nullptr,                    /* update func. */
+                         3600,                       /* default */
+                         0,                          /* min */
+                         MAX_FLOW_CONTROL_WAIT_TIME, /* max */
+                         0                           /* block */
+);
+
+static MYSQL_SYSVAR_LONG(
     flow_control_applier_threshold,                        /* name */
     ov.flow_control_applier_threshold_var,                 /* var */
     PLUGIN_VAR_OPCMDARG | PLUGIN_VAR_PERSIST_AS_READ_ONLY, /* optional var */
@@ -4700,13 +4988,26 @@ static MYSQL_SYSVAR_ULONG(
     0                               /* block */
 );
 
+static MYSQL_SYSVAR_ULONG(
+    request_time_threshold,                                /* name */
+    ov.request_time_threshold_var,                         /* var */
+    PLUGIN_VAR_OPCMDARG | PLUGIN_VAR_PERSIST_AS_READ_ONLY, /* optional var */
+    "Specifies the threshold value(in millisecond) of group replication "
+    "request time that can be logged.",
+    nullptr, /* check func. */
+    nullptr, /* update func. */
+    0,       /* default */
+    0,       /* min */
+    100000,  /* max */
+    0        /* block */
+);
+
 static MYSQL_SYSVAR_STR(
     communication_debug_options,        /* name */
     ov.communication_debug_options_var, /* var */
     PLUGIN_VAR_OPCMDARG | PLUGIN_VAR_MEMALLOC |
         PLUGIN_VAR_PERSIST_AS_READ_ONLY, /* optional var | malloc string */
-    "The set of debug options, comma separated. E.g., DEBUG_BASIC, "
-    "DEBUG_ALL.",
+    "The set of debug options, comma separated. E.g., DEBUG_BASIC, DEBUG_ALL.",
     check_communication_debug_options, /* check func */
     nullptr,                           /* update func */
     "GCS_DEBUG_NONE"                   /* default */
@@ -4738,12 +5039,33 @@ static MYSQL_SYSVAR_UINT(autorejoin_tries,        /* name */
                          lv.MAX_AUTOREJOIN_TRIES, /* max */
                          0);                      /* block */
 
+static MYSQL_SYSVAR_UINT(zone_id,        /* name */
+                         ov.zone_id_var, /* var */
+                         PLUGIN_VAR_OPCMDARG |
+                             PLUGIN_VAR_PERSIST_AS_READ_ONLY, /* optional var */
+                         "The zone id for this node.",
+                         check_zone_id,  /* check func */
+                         update_zone_id, /* update func */
+                         0U,             /* default */
+                         0U,             /* min */
+                         8U,             /* max */
+                         0);             /* block */
+
+// TODO: use enum
+static MYSQL_SYSVAR_BOOL(zone_id_sync_mode,        /* name */
+                         ov.zone_id_sync_mode_var, /* var */
+                         PLUGIN_VAR_OPCMDARG |
+                             PLUGIN_VAR_PERSIST_AS_READ_ONLY, /* optional var */
+                         "The mode of zone id behavior.",
+                         check_zone_id_sync_mode, /* check func */
+                         nullptr,                 /* update func */
+                         true);                   /* default */
+
 static MYSQL_SYSVAR_ULONG(
     unreachable_majority_timeout,                          /* name */
     ov.timeout_on_unreachable_var,                         /* var */
     PLUGIN_VAR_OPCMDARG | PLUGIN_VAR_PERSIST_AS_READ_ONLY, /* optional var */
-    "The number of seconds before going into error when a majority of "
-    "members "
+    "The number of seconds before going into error when a majority of members "
     "is unreachable."
     "If 0 there is no action taken.",
     check_sysvar_ulong_timeout, /* check func. */
@@ -4766,6 +5088,19 @@ static MYSQL_SYSVAR_UINT(
     MIN_MEMBER_WEIGHT,     /* min */
     MAX_MEMBER_WEIGHT,     /* max */
     0                      /* block */
+);
+
+static MYSQL_SYSVAR_UINT(applier_batch_size_threshold,        /* name */
+                         ov.applier_batch_size_threshold_var, /* var */
+                         PLUGIN_VAR_OPCMDARG |
+                             PLUGIN_VAR_PERSIST_AS_READ_ONLY, /* optional var */
+                         "minimum event size in applier queue for batching",
+                         nullptr,   /* check func. */
+                         nullptr,   /* update func. */
+                         5000000,   /* default */
+                         10,        /* min */
+                         100000000, /* max */
+                         0          /* block */
 );
 
 static MYSQL_SYSVAR_LONG(
@@ -4841,6 +5176,20 @@ static MYSQL_SYSVAR_INT(
 );
 
 static MYSQL_SYSVAR_INT(
+    broadcast_gtid_executed_period,                        /* name */
+    ov.broadcast_gtid_executed_period_var,                 /* var */
+    PLUGIN_VAR_OPCMDARG | PLUGIN_VAR_PERSIST_AS_READ_ONLY, /* optional var */
+    "Specifies how many milliseconds to wait between gtid broadcast."
+    "Default: 1000",
+    nullptr, /* check func. */
+    nullptr, /* update func. */
+    1000,    /* default */
+    200,     /* min */
+    60000,   /* max */
+    0        /* block */
+);
+
+static MYSQL_SYSVAR_INT(
     flow_control_hold_percent,                             /* name */
     ov.flow_control_hold_percent_var,                      /* var */
     PLUGIN_VAR_OPCMDARG | PLUGIN_VAR_PERSIST_AS_READ_ONLY, /* optional var */
@@ -4872,8 +5221,7 @@ static MYSQL_SYSVAR_ULONGLONG(
     clone_threshold,                                       /* name */
     ov.clone_threshold_var,                                /* var */
     PLUGIN_VAR_OPCMDARG | PLUGIN_VAR_PERSIST_AS_READ_ONLY, /* optional var */
-    "The number of missing transactions in a joining member needed to "
-    "execute "
+    "The number of missing transactions in a joining member needed to execute "
     "the clone procedure.",
     check_clone_threshold,  /* check func. */
     update_clone_threshold, /* update func. */
@@ -4905,17 +5253,6 @@ static MYSQL_SYSVAR_UINT(
     1U,                                     /* min */
     22U,                                    /* max */
     0                                       /* block */
-);
-
-static MYSQL_SYSVAR_BOOL(
-    paxos_single_leader,                                   /* name */
-    ov.allow_single_leader_var,                            /* var */
-    PLUGIN_VAR_OPCMDARG | PLUGIN_VAR_PERSIST_AS_READ_ONLY, /* optional var */
-    "Enables or disables the usage of a single consensus leader when running "
-    "the group in Single-Primary mode.",
-    nullptr,                    /* check func. */
-    update_allow_single_leader, /* update func*/
-    0                           /* default */
 );
 
 static int check_advertise_recovery_endpoints(MYSQL_THD thd, SYS_VAR *,
@@ -5021,8 +5358,7 @@ static int check_view_change_uuid_string(const char *str, bool is_var_update) {
           mysql_runtime_error_service,
           ER_WRONG_VALUE_FOR_VAR_PLUS_ACTIONABLE_PART, 0,
           "group_replication_view_change_uuid", str,
-          "The value is already used for "
-          "ASSIGN_GTIDS_TO_ANOYMOUS_TRANSACTIONS "
+          "The value is already used for ASSIGN_GTIDS_TO_ANOYMOUS_TRANSACTIONS "
           "in a server channel");
     }
     return 1;
@@ -5134,15 +5470,23 @@ static SYS_VAR *group_replication_system_vars[] = {
     MYSQL_SYSVAR(ip_allowlist),
     MYSQL_SYSVAR(single_primary_mode),
     MYSQL_SYSVAR(enforce_update_everywhere_checks),
+    MYSQL_SYSVAR(majority_after_mode),
     MYSQL_SYSVAR(flow_control_mode),
     MYSQL_SYSVAR(flow_control_certifier_threshold),
+    MYSQL_SYSVAR(flow_control_replay_lag_behind),
+    MYSQL_SYSVAR(flow_control_max_wait_time),
     MYSQL_SYSVAR(flow_control_applier_threshold),
+    MYSQL_SYSVAR(arbitrator),
     MYSQL_SYSVAR(transaction_size_limit),
+    MYSQL_SYSVAR(request_time_threshold),
     MYSQL_SYSVAR(communication_debug_options),
     MYSQL_SYSVAR(exit_state_action),
     MYSQL_SYSVAR(autorejoin_tries),
     MYSQL_SYSVAR(unreachable_majority_timeout),
     MYSQL_SYSVAR(member_weight),
+    MYSQL_SYSVAR(zone_id),
+    MYSQL_SYSVAR(zone_id_sync_mode),
+    MYSQL_SYSVAR(single_primary_fast_mode),
     MYSQL_SYSVAR(flow_control_min_quota),
     MYSQL_SYSVAR(flow_control_min_recovery_quota),
     MYSQL_SYSVAR(flow_control_max_quota),
@@ -5150,8 +5494,10 @@ static SYS_VAR *group_replication_system_vars[] = {
     MYSQL_SYSVAR(flow_control_period),
     MYSQL_SYSVAR(flow_control_hold_percent),
     MYSQL_SYSVAR(flow_control_release_percent),
+    MYSQL_SYSVAR(broadcast_gtid_executed_period),
     MYSQL_SYSVAR(member_expel_timeout),
     MYSQL_SYSVAR(message_cache_size),
+    MYSQL_SYSVAR(communication_flp_timeout),
     MYSQL_SYSVAR(clone_threshold),
     MYSQL_SYSVAR(recovery_tls_version),
     MYSQL_SYSVAR(recovery_tls_ciphersuites),
@@ -5159,7 +5505,7 @@ static SYS_VAR *group_replication_system_vars[] = {
     MYSQL_SYSVAR(tls_source),
     MYSQL_SYSVAR(view_change_uuid),
     MYSQL_SYSVAR(communication_stack),
-    MYSQL_SYSVAR(paxos_single_leader),
+    MYSQL_SYSVAR(applier_batch_size_threshold),
     nullptr,
 };
 

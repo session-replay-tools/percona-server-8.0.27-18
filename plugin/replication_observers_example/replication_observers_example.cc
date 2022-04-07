@@ -722,7 +722,7 @@ int test_channel_service_interface() {
 
   // Check that a queue in an empty channel will fail.
   char empty_event[] = "";
-  error = channel_queue_packet(dummy_channel, empty_event, 0);
+  error = channel_queue_packet(dummy_channel, empty_event, 0, false);
   assert(error);
 
   // Test a multi thread channel

@@ -876,6 +876,10 @@ class Slave_worker : public Relay_log_info {
   */
   bool retry_transaction(uint start_relay_number, my_off_t start_relay_pos,
                          uint end_relay_number, my_off_t end_relay_pos);
+  bool retry_referenced_transaction(uint start_relay_number,
+                                    my_off_t start_relay_pos,
+                                    uint end_relay_number,
+                                    my_off_t end_relay_pos);
 
   bool set_info_search_keys(Rpl_info_handler *to) override;
 

@@ -183,8 +183,10 @@ class Transaction_consistency_info {
   const rpl_gno m_gno;
   const enum_group_replication_consistency_level m_consistency_level;
   std::list<Gcs_member_identifier> *m_members_that_must_prepare_the_transaction;
+  int m_least_prepared_num;
   bool m_transaction_prepared_locally;
   bool m_transaction_prepared_remotely;
+  bool m_worker_applied;
 };
 
 typedef std::pair<rpl_sidno, rpl_gno> Transaction_consistency_manager_key;
@@ -262,7 +264,10 @@ class Transaction_consistency_manager : public Group_transaction_listener {
       @retval !=0    error
   */
   int handle_remote_prepare(const rpl_sid *sid, rpl_gno gno,
-                            const Gcs_member_identifier &gcs_member_id);
+                            const Gcs_member_identifier &gcs_member_id,
+                            int *delayed);
+
+  bool is_remote_prepare_before_view_change(const rpl_sid *sid, rpl_gno gno);
 
   /**
     Call action after members leave the group.
@@ -466,9 +471,7 @@ class Transaction_consistency_manager : public Group_transaction_listener {
   std::list<Transaction_consistency_manager_key>
       m_prepared_transactions_on_my_applier;
   std::list<my_thread_id> m_new_transactions_waiting;
-  std::list<std::pair<Pipeline_event *, Transaction_consistency_manager_key>>
-      m_delayed_view_change_events;
-  Transaction_consistency_manager_key m_last_local_transaction;
+  std::list<Pipeline_event *> m_delayed_view_change_events;
 
   std::atomic<bool> m_plugin_stopping;
   std::atomic<bool> m_primary_election_active;

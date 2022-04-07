@@ -120,12 +120,6 @@ class Data_packet : public Packet {
         If not specified, this field has a default value of 0.
 */
 class Pipeline_event {
-  enum class Processing_state {
-    DEFAULT,
-    DELAYED_VIEW_CHANGE_WAITING_FOR_CONSISTENT_TRANSACTIONS,
-    DELAYED_VIEW_CHANGE_RESUMED
-  };
-
  public:
   /**
     Create a new pipeline wrapper based on a packet.
@@ -340,52 +334,6 @@ class Pipeline_event {
     m_online_members_memory_ownership = false;
   }
 
-  /**
-    Set view change cannot be processed now and should be delayed due to
-    consistent transaction.
-  */
-  void set_delayed_view_change_waiting_for_consistent_transactions() {
-    assert(m_packet_processing_state == Processing_state::DEFAULT);
-    m_packet_processing_state = Processing_state::
-        DELAYED_VIEW_CHANGE_WAITING_FOR_CONSISTENT_TRANSACTIONS;
-  }
-
-  /**
-    Check if current view change is delayed due to consistent transaction.
-
-    @return is event being queued for later processing
-      @retval true     event is being queued
-      @retval false    event is not being queued
-  */
-  bool is_delayed_view_change_waiting_for_consistent_transactions() {
-    return m_packet_processing_state ==
-           Processing_state::
-               DELAYED_VIEW_CHANGE_WAITING_FOR_CONSISTENT_TRANSACTIONS;
-  }
-
-  /**
-    Allow resume the log of delayed views that were waiting for consistent
-    transactions from previous view to complete.
-  */
-  void set_delayed_view_change_resumed() {
-    assert(m_packet_processing_state ==
-           Processing_state::
-               DELAYED_VIEW_CHANGE_WAITING_FOR_CONSISTENT_TRANSACTIONS);
-    m_packet_processing_state = Processing_state::DELAYED_VIEW_CHANGE_RESUMED;
-  }
-
-  /**
-    Check if old view change processing is resumed.
-
-    @return is event being processed from queue
-      @retval true     event is being processed from queue
-      @retval false    event is not being processed from queue
-  */
-  bool is_delayed_view_change_resumed() {
-    return m_packet_processing_state ==
-           Processing_state::DELAYED_VIEW_CHANGE_RESUMED;
-  }
-
  private:
   /**
     Converts the existing packet into a log event.
@@ -445,7 +393,6 @@ class Pipeline_event {
   enum_group_replication_consistency_level m_consistency_level;
   std::list<Gcs_member_identifier> *m_online_members;
   bool m_online_members_memory_ownership;
-  Processing_state m_packet_processing_state{Processing_state::DEFAULT};
 };
 
 /**
@@ -615,8 +562,8 @@ class Event_handler {
     @param[in]      event           the pipeline event to be handled
     @param[in,out]  continuation    termination notification object.
   */
-  virtual int handle_event(Pipeline_event *event,
-                           Continuation *continuation) = 0;
+  virtual int handle_event(Pipeline_event *event, Continuation *continuation,
+                           bool io_buffered) = 0;
 
   /**
     Handling of an action as defined in the handler implementation.
@@ -631,7 +578,7 @@ class Event_handler {
 
     @param[in]      action         the pipeline event to be handled
   */
-  virtual int handle_action(Pipeline_action *action) = 0;
+  virtual int handle_action(Pipeline_action *action, bool io_buffered) = 0;
 
   // pipeline appending methods
 
@@ -764,9 +711,10 @@ class Event_handler {
     @param[in]      event           the pipeline event to be handled
     @param[in,out]  continuation    termination notification object.
   */
-  int next(Pipeline_event *event, Continuation *continuation) {
+  int next(Pipeline_event *event, Continuation *continuation,
+           bool io_buffered) {
     if (next_in_pipeline)
-      next_in_pipeline->handle_event(event, continuation);
+      next_in_pipeline->handle_event(event, continuation, io_buffered);
     else
       continuation->signal();
     return 0;
@@ -778,10 +726,11 @@ class Event_handler {
 
     @param[in]  action     the pipeline action to be handled
   */
-  int next(Pipeline_action *action) {
+  int next(Pipeline_action *action, bool io_buffered) {
     int error = 0;
 
-    if (next_in_pipeline) error = next_in_pipeline->handle_action(action);
+    if (next_in_pipeline)
+      error = next_in_pipeline->handle_action(action, io_buffered);
 
     return error;
   }

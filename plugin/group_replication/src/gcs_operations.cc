@@ -437,9 +437,13 @@ enum enum_gcs_error Gcs_operations::send_message(
 
   Gcs_member_identifier origin = gcs_control->get_local_member_identifier();
   Gcs_message gcs_message(origin, new Gcs_message_data(0, message_data.size()));
-  gcs_message.get_message_data().append_to_payload(&message_data.front(),
-                                                   message_data.size());
-  error = gcs_communication->send_message(gcs_message);
+  bool result = gcs_message.get_message_data().append_to_payload(
+      &message_data.front(), message_data.size());
+  if (!result) {
+    error = gcs_communication->send_message(gcs_message);
+  } else {
+    error = GCS_MESSAGE_TOO_BIG;
+  }
 
   gcs_operations_lock->unlock();
   return error;
@@ -622,48 +626,6 @@ enum enum_gcs_error Gcs_operations::set_write_concurrency(
   return result;
 }
 
-enum enum_gcs_error Gcs_operations::set_leader(
-    Gcs_member_identifier const &leader) {
-  DBUG_TRACE;
-  enum enum_gcs_error result = GCS_NOK;
-  gcs_operations_lock->wrlock();
-  Gcs_group_management_interface *gcs_group_manager = get_gcs_group_manager();
-  if (gcs_group_manager != nullptr) {
-    result = gcs_group_manager->set_single_leader(leader);
-  }
-
-  gcs_operations_lock->unlock();
-  return result;
-}
-
-enum enum_gcs_error Gcs_operations::set_everyone_leader() {
-  DBUG_TRACE;
-  enum enum_gcs_error result = GCS_NOK;
-  gcs_operations_lock->wrlock();
-  Gcs_group_management_interface *gcs_group_manager = get_gcs_group_manager();
-  if (gcs_group_manager != nullptr) {
-    result = gcs_group_manager->set_everyone_leader();
-  }
-
-  gcs_operations_lock->unlock();
-  return result;
-}
-
-enum enum_gcs_error Gcs_operations::get_leaders(
-    std::vector<Gcs_member_identifier> &preferred_leaders,
-    std::vector<Gcs_member_identifier> &actual_leaders) {
-  DBUG_TRACE;
-  enum enum_gcs_error result = GCS_NOK;
-  gcs_operations_lock->rdlock();
-  Gcs_group_management_interface *gcs_group_manager = get_gcs_group_manager();
-  if (gcs_group_manager != nullptr) {
-    result = gcs_group_manager->get_leaders(preferred_leaders, actual_leaders);
-  }
-
-  gcs_operations_lock->unlock();
-  return result;
-}
-
 uint32_t Gcs_operations::get_minimum_write_concurrency() const {
   DBUG_TRACE;
   uint32_t result = 0;
@@ -808,6 +770,23 @@ Gcs_mysql_network_provider *Gcs_operations::get_mysql_network_provider() {
   return result;
 }
 
+enum enum_gcs_error Gcs_operations::set_xcom_flp_timeout(uint64_t new_timeout) {
+  DBUG_TRACE;
+  enum enum_gcs_error result = GCS_NOK;
+  gcs_operations_lock->wrlock();
+  if (gcs_interface != nullptr && gcs_interface->is_initialized()) {
+    std::string group_name(get_group_name_var());
+    Gcs_group_identifier group_id(group_name);
+    Gcs_control_interface *gcs_control =
+        gcs_interface->get_control_session(group_id);
+    if (gcs_control != nullptr) {
+      result = gcs_control->set_xcom_flp_timeout(new_timeout);
+    }
+  }
+  gcs_operations_lock->unlock();
+  return result;
+}
+
 const std::string &Gcs_operations::get_gcs_engine() { return gcs_engine; }
 
 bool Gcs_operations::is_initialized() {
@@ -815,4 +794,13 @@ bool Gcs_operations::is_initialized() {
   bool ret = nullptr != gcs_interface;
   gcs_operations_lock->unlock();
   return ret;
+}
+
+void Gcs_operations::update_zone_id_through_gcs(const char *ip, int zone_id,
+                                                bool zone_id_sync_mode) {
+  gcs_operations_lock->wrlock();
+  if (gcs_interface != nullptr && gcs_interface->is_initialized()) {
+    gcs_interface->update_zone_id_for_xcom_node(ip, zone_id, zone_id_sync_mode);
+  }
+  gcs_operations_lock->unlock();
 }

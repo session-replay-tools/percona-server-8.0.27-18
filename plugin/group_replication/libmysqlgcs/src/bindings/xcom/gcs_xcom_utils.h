@@ -78,6 +78,9 @@ class Gcs_xcom_utils {
    */
   static uint32_t mhash(const unsigned char *buf, size_t length);
 
+  static void update_zone_id_for_paxos_node(const char *ip, int zone_id,
+                                            bool zone_id_sync_mode);
+
   static int init_net();
   static int deinit_net();
 

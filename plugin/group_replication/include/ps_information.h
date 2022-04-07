@@ -38,8 +38,7 @@ bool get_group_members_info(
 bool get_group_member_stats(
     uint index, const GROUP_REPLICATION_GROUP_MEMBER_STATS_CALLBACKS &callbacks,
     Group_member_info_manager_interface *group_member_manager,
-    Applier_module *applier_module, Gcs_operations *gcs_module,
-    char *channel_name);
+    Gcs_operations *gcs_module, char *channel_name);
 
 bool get_connection_status(
     const GROUP_REPLICATION_CONNECTION_STATUS_CALLBACKS &callbacks,

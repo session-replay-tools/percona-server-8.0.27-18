@@ -23,10 +23,7 @@
 #ifndef XCOM_TRANSPORT_H
 #define XCOM_TRANSPORT_H
 
-#include "xcom/server_struct.h"
-#include "xcom/site_struct.h"
 #include "xcom/xcom_common.h"
-#include "xdr_gen/xcom_vp.h"
 
 #define XDR_INT_SIZE 4
 #define MSG_HDR_SIZE (3 * XDR_INT_SIZE)
@@ -145,6 +142,7 @@ int send_server_msg(site_def const *s, node_no i, pax_msg *p);
 double server_active(site_def const *s, node_no i);
 void update_servers(site_def *s, cargo_type operation);
 void garbage_collect_servers();
+bool check_tcp_connection_valid(int fd, int *same_ip);
 int send_msg(server *s, node_no from, node_no to, uint32_t group_id,
              pax_msg *p);
 /**
@@ -214,7 +212,7 @@ xcom_proto minimum_ipv6_version();
  * @param port the resulting port
  * @return int true (1) in case of parse error
  */
-int get_ip_and_port(char const *address, char ip[IP_MAX_SIZE], xcom_port *port);
+int get_ip_and_port(char *address, char ip[IP_MAX_SIZE], xcom_port *port);
 
 /**
  * @brief Checks if an incoming node is eligible to enter the group
@@ -235,8 +233,11 @@ int get_ip_and_port(char const *address, char ip[IP_MAX_SIZE], xcom_port *port);
 int is_new_node_eligible_for_ipv6(xcom_proto incoming_proto,
                                   const site_def *current_site_def);
 
+void update_zone_id_for_consensus(const char *ip, int zone_id,
+                                  bool zone_id_sync_mode);
+
 #define INITIAL_CONNECT_WAIT 0.1
 #define MAX_CONNECT_WAIT 10.0
-#define CONNECT_WAIT_INCREASE 1.0
+#define CONNECT_WAIT_INCREASE 1.1
 
 #endif

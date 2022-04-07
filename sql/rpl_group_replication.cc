@@ -500,6 +500,17 @@ void get_server_startup_prerequirements(Trans_context_info &requirements) {
       global_system_variables.default_table_encryption;
 }
 
+void add_to_gtid_executed(rpl_sidno sidno, rpl_gno gno) {
+  gtid_state->add_to_gtid_executed(sidno, gno);
+}
+
+int add_text_to_gtid_executed(const char *text) {
+  if (gtid_state->add_text_to_gtid_executed(text) != RETURN_STATUS_OK) {
+    return -1;
+  }
+  return 0;
+}
+
 bool get_server_encoded_gtid_executed(uchar **encoded_gtid_executed,
                                       size_t *length) {
   Checkable_rwlock::Guard g(*global_sid_lock, Checkable_rwlock::WRITE_LOCK);

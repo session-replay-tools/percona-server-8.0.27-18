@@ -200,6 +200,32 @@ class Synchronized_queue : public Synchronized_queue_interface<T> {
     return false;
   }
 
+  bool push_all(std::queue<T> *delayed_queue) {
+    mysql_mutex_lock(&lock);
+    size_t qsize = queue.size();
+    if (qsize > 0) {
+      do {
+        T out = queue.front();
+        delayed_queue->push(out);
+        queue.pop();
+        qsize--;
+      } while (qsize > 0);
+    }
+
+    qsize = delayed_queue->size();
+    if (qsize) {
+      do {
+        T out = delayed_queue->front();
+        queue.push(out);
+        delayed_queue->pop();
+        qsize--;
+      } while (qsize > 0);
+    }
+    mysql_cond_broadcast(&cond);
+    mysql_mutex_unlock(&lock);
+    return false;
+  }
+
   bool pop(T *out) override {
     *out = NULL;
     mysql_mutex_lock(&lock);
@@ -557,6 +583,32 @@ class Wait_ticket {
     }
 
     mysql_mutex_unlock(&lock);
+    return error;
+  }
+
+  /**
+    unregister ticket
+    @param       key                   The key that identifies the ticket
+    @retval 0         success
+    @retval !=0       (key doesn't exist)
+  */
+  int unregisterTicket(const K &key) {
+    int error = 0;
+
+    mysql_mutex_lock(&lock);
+    typename std::map<K, CountDownLatch *>::iterator it = map.find(key);
+    if (it == map.end())
+      error = 1;
+    else {
+      it->second->countDown();
+      if (it->second->getCount() == 0) {
+        CountDownLatch *cdl = it->second;
+        delete cdl;
+        map.erase(it);
+      }
+    }
+    mysql_mutex_unlock(&lock);
+
     return error;
   }
 

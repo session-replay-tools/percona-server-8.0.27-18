@@ -284,21 +284,17 @@ void Plugin_gcs_events_handler::handle_certifier_message(
     return;                                           /* purecov: inspected */
   }
 
-  Certifier_interface *certifier =
-      this->applier_module->get_certification_handler()->get_certifier();
-
   const unsigned char *payload_data = nullptr;
   size_t payload_size = 0;
   Plugin_gcs_message::get_first_payload_item_raw_data(
       message.get_message_data().get_payload(), &payload_data, &payload_size);
 
-  if (certifier->handle_certifier_data(payload_data,
-                                       static_cast<ulong>(payload_size),
-                                       message.get_origin())) {
-    LogPluginErr(
-        ERROR_LEVEL,
-        ER_GRP_RPL_CERTIFIER_MSSG_PROCESS_ERROR); /* purecov: inspected */
-  }
+  Certification_packet *certification_change_packet = new Certification_packet(
+      payload_data, static_cast<ulong>(payload_size), message.get_origin());
+
+  /* It should be put to the appplier queue */
+  this->applier_module->add_certification_change_packet(
+      certification_change_packet);
 }
 
 void Plugin_gcs_events_handler::handle_recovery_message(
@@ -461,9 +457,15 @@ void Plugin_gcs_events_handler::handle_group_action_message(
 
 void Plugin_gcs_events_handler::on_suspicions(
     const std::vector<Gcs_member_identifier> &members,
+    const std::vector<Gcs_member_identifier *> &left_members,
     const std::vector<Gcs_member_identifier> &unreachable) const {
-  if (members.empty() && unreachable.empty())  // nothing to do
+  LogPluginErrMsg(INFORMATION_LEVEL, ER_LOG_PRINTF_MSG,
+                  "on_suspicions is activated");
+  if (members.empty() && unreachable.empty()) {  // nothing to do
+    LogPluginErrMsg(INFORMATION_LEVEL, ER_LOG_PRINTF_MSG,
+                    "Both members and unreachable are empty");
     return;                                    /* purecov: inspected */
+  }
 
   assert(members.size() >= unreachable.size());
 
@@ -477,9 +479,11 @@ void Plugin_gcs_events_handler::on_suspicions(
       Group_member_info *member_info =
           group_member_mgr->get_group_member_info_by_member_id(member);
 
-      if (member_info == nullptr)  // Trying to update a non-existing member
+      if (member_info == nullptr) {  // Trying to update a non-existing member
+        LogPluginErrMsg(INFORMATION_LEVEL, ER_LOG_PRINTF_MSG,
+                        "member info is nullptr");
         continue;                  /* purecov: inspected */
-
+      }
       uit = std::find(tmp_unreachable.begin(), tmp_unreachable.end(), member);
       if (uit != tmp_unreachable.end()) {
         if (!member_info->is_unreachable()) {
@@ -510,6 +514,35 @@ void Plugin_gcs_events_handler::on_suspicions(
   }
 
   if ((members.size() - unreachable.size()) <= (members.size() / 2)) {
+    if (!left_members.empty()) {
+      std::vector<Gcs_member_identifier *>::const_iterator it;
+      bool is_unreachable_set = false;
+      for (it = left_members.begin(); it != left_members.end(); it++) {
+        const Gcs_member_identifier *member = *it;
+        Group_member_info *member_info =
+            group_member_mgr->get_group_member_info_by_member_id(*member);
+        if (member_info == nullptr) {
+          continue;
+        }
+        if (group_member_mgr->set_member_unreachable(member_info->get_uuid())) {
+          is_unreachable_set = true;
+          m_notification_ctx.set_member_state_changed();
+          LogPluginErr(WARNING_LEVEL, ER_GRP_RPL_MEM_UNREACHABLE,
+                       member_info->get_hostname().c_str(),
+                       member_info->get_port());
+        }
+        delete member_info;
+      }
+      if (is_unreachable_set) {
+        LogPluginErrMsg(
+            INFORMATION_LEVEL, ER_LOG_PRINTF_MSG,
+            "Set members unreachable when they have already left group");
+      } else {
+        LogPluginErrMsg(INFORMATION_LEVEL, ER_LOG_PRINTF_MSG,
+                        "Could not set members unreachable when they have "
+                        "already left group");
+      }
+    }
     if (!group_partition_handler->get_timeout_on_unreachable())
       LogPluginErr(ERROR_LEVEL, ER_GRP_RPL_SRV_BLOCKED);
     else
@@ -523,6 +556,22 @@ void Plugin_gcs_events_handler::on_suspicions(
     // flag as having lost quorum
     m_notification_ctx.set_quorum_lost();
   } else {
+    if (!left_members.empty()) {
+      std::vector<Gcs_member_identifier *>::const_iterator it;
+      for (it = left_members.begin(); it != left_members.end(); it++) {
+        const Gcs_member_identifier *member = *it;
+        Group_member_info *member_info =
+            group_member_mgr->get_group_member_info_by_member_id(*member);
+        if (member_info != nullptr) {
+          LogPluginErrMsg(INFORMATION_LEVEL, ER_LOG_PRINTF_MSG,
+                          "host:%s, port:%d has left the group",
+                          member_info->get_hostname().c_str(),
+                          member_info->get_port());
+        }
+        delete member_info;
+      }
+    }
+
     /*
       This code is present on on_view_changed and on_suspicions as no assumption
       can be made about the order in which these methods are invoked.
@@ -537,6 +586,8 @@ void Plugin_gcs_events_handler::on_suspicions(
     }
   }
   notify_and_reset_ctx(m_notification_ctx);
+  LogPluginErrMsg(INFORMATION_LEVEL, ER_LOG_PRINTF_MSG,
+                  "on_suspicions is called over");
 }
 
 void Plugin_gcs_events_handler::log_members_leaving_message(
@@ -608,6 +659,8 @@ void Plugin_gcs_events_handler::get_hosts_from_view(
 
 void Plugin_gcs_events_handler::on_view_changed(
     const Gcs_view &new_view, const Exchanged_data &exchanged_data) const {
+  LogPluginErrMsg(INFORMATION_LEVEL, ER_LOG_PRINTF_MSG,
+                  "on_view_changed is called");
   bool is_leaving = is_member_on_vector(new_view.get_leaving_members(),
                                         local_member_info->get_gcs_member_id());
 
@@ -711,7 +764,16 @@ void Plugin_gcs_events_handler::on_view_changed(
 
     // Handle leader election if needed
     if (!skip_election && !is_leaving) {
+      LogPluginErrMsg(
+          INFORMATION_LEVEL, ER_LOG_PRINTF_MSG,
+          "handle_leader_election_if_needed is activated,suggested_primary:%s",
+          suggested_primary.c_str());
       this->handle_leader_election_if_needed(election_mode, suggested_primary);
+    } else {
+      if (skip_election) {
+        LogPluginErrMsg(INFORMATION_LEVEL, ER_LOG_PRINTF_MSG,
+                        "on_view_changed:skip_election is true");
+      }
     }
   }
 
@@ -781,8 +843,45 @@ void Plugin_gcs_events_handler::handle_leader_election_if_needed(
     is stopping that will always result in a plugin restart.
   */
   if (election_mode == DEAD_OLD_PRIMARY &&
-      !local_member_info->in_primary_mode())
+      !local_member_info->in_primary_mode()) {
+    if (is_arbitrator_role()) {
+      std::vector<Group_member_info *> *all_members_info =
+          group_member_mgr->get_all_members();
+      bool group_valid = false;
+      if (all_members_info->size() > 1) {
+        std::vector<Group_member_info *>::iterator it;
+        for (it = all_members_info->begin(); it != all_members_info->end();
+             it++) {
+          if ((*it)->get_role() != Group_member_info::MEMBER_ROLE_ARBITRATOR) {
+            group_valid = true;
+            break;
+          }
+        }
+      }
+
+      if (!group_valid) {
+        std::string exit_state_action_abort_log_message(
+            "Fatal error when arbitrator is alone.");
+        LogPluginErr(ERROR_LEVEL, ER_GRP_RPL_PRIMARY_ELECTION_PROCESS_ERROR,
+                     exit_state_action_abort_log_message.c_str());
+
+        leave_group_on_failure::mask leave_actions;
+        leave_actions.set(leave_group_on_failure::STOP_APPLIER, true);
+        leave_actions.set(leave_group_on_failure::HANDLE_EXIT_STATE_ACTION,
+                          true);
+        leave_group_on_failure::leave(
+            leave_actions, 0, PSESSION_INIT_THREAD, nullptr,
+            exit_state_action_abort_log_message.c_str());
+      }
+      std::vector<Group_member_info *>::iterator it;
+      for (it = all_members_info->begin(); it != all_members_info->end();
+           it++) {
+        delete (*it);
+      }
+      delete all_members_info;
+    }
     return;
+  }
 
   primary_election_handler->execute_primary_election(
       suggested_primary, election_mode, &m_notification_ctx);
@@ -804,10 +903,22 @@ int Plugin_gcs_events_handler::update_group_info_manager(
     to_update.insert(to_update.end(), temporary_states->begin(),
                      temporary_states->end());
 
+    vector<Group_member_info *>::iterator to_update_it;
+    // Add zone id to xcom
+    if (new_view.get_joined_members().size() > 0) {
+      for (to_update_it = to_update.begin(); to_update_it != to_update.end();
+           to_update_it++) {
+        std::string host = (*to_update_it)->get_hostname();
+        int zone_id = (*to_update_it)->get_zone_id();
+        bool zone_id_sync_mode = (*to_update_it)->get_zone_id_sync_mode();
+        plugin_update_zone_id_for_communication_node(host.c_str(), zone_id,
+                                                     zone_id_sync_mode);
+      }
+    }
+
     // Clean-up members that are leaving
     vector<Gcs_member_identifier> leaving = new_view.get_leaving_members();
     vector<Gcs_member_identifier>::iterator left_it;
-    vector<Group_member_info *>::iterator to_update_it;
     for (left_it = leaving.begin(); left_it != leaving.end(); left_it++) {
       for (to_update_it = to_update.begin(); to_update_it != to_update.end();
            to_update_it++) {
@@ -1603,15 +1714,20 @@ int Plugin_gcs_events_handler::compare_member_transaction_sets() const {
         /* purecov: end */
       }
     } else {
-      if (group_set.add_gtid_text(member_exec_set_str.c_str()) !=
-              RETURN_STATUS_OK ||
-          group_set.add_gtid_text(applier_ret_set_str.c_str()) !=
-              RETURN_STATUS_OK) {
-        /* purecov: begin inspected */
-        LogPluginErr(ERROR_LEVEL, ER_GRP_RPL_LOCAL_GTID_SETS_PROCESS_ERROR);
-        result = -1;
-        goto cleaning;
-        /* purecov: end */
+      Group_member_info::Group_member_status status =
+          (*all_members_it)->get_recovery_status();
+      if (status == Group_member_info::MEMBER_ONLINE ||
+          status == Group_member_info::MEMBER_IN_RECOVERY) {
+        if (group_set.add_gtid_text(member_exec_set_str.c_str()) !=
+                RETURN_STATUS_OK ||
+            group_set.add_gtid_text(applier_ret_set_str.c_str()) !=
+                RETURN_STATUS_OK) {
+          /* purecov: begin inspected */
+          LogPluginErr(ERROR_LEVEL, ER_GRP_RPL_LOCAL_GTID_SETS_PROCESS_ERROR);
+          result = -1;
+          goto cleaning;
+          /* purecov: end */
+        }
       }
     }
   }
@@ -1722,6 +1838,27 @@ int Plugin_gcs_events_handler::compare_member_option_compatibility() const {
       goto cleaning;
     }
 
+    if (local_member_info->in_single_primary_fast_mode() !=
+        (*all_members_it)->in_single_primary_fast_mode()) {
+      if (local_member_info->in_single_primary_fast_mode() == 0 ||
+          (*all_members_it)->in_single_primary_fast_mode() == 0) {
+        result = 1;
+        LogPluginErr(ERROR_LEVEL, ER_GRP_RPL_FAST_MODE_NOT_COMPATIBLE,
+                     local_member_info->in_single_primary_fast_mode(),
+                     (*all_members_it)->in_single_primary_fast_mode());
+        goto cleaning;
+      }
+    }
+
+    if (local_member_info->get_zone_id_sync_mode() !=
+        (*all_members_it)->get_zone_id_sync_mode()) {
+      result = 1;
+      LogPluginErr(ERROR_LEVEL, ER_GRP_RPL_ZONE_ID_SYNC_MODE_NOT_COMPATIBLE,
+                   local_member_info->get_zone_id_sync_mode(),
+                   (*all_members_it)->get_zone_id_sync_mode());
+      goto cleaning;
+    }
+
     if ((*all_members_it)->get_lower_case_table_names() !=
             DEFAULT_NOT_RECEIVED_LOWER_CASE_TABLE_NAMES &&
         local_member_info->get_lower_case_table_names() !=
@@ -1749,15 +1886,6 @@ int Plugin_gcs_events_handler::compare_member_option_compatibility() const {
       LogPluginErr(ERROR_LEVEL, ER_GRP_RPL_VIEW_CHANGE_UUID_DIFF_FROM_GRP,
                    local_member_info->get_view_change_uuid().c_str(),
                    (*all_members_it)->get_view_change_uuid().c_str());
-      goto cleaning;
-    }
-
-    if (local_member_info->get_allow_single_leader() !=
-        (*all_members_it)->get_allow_single_leader()) {
-      result = 1;
-      LogPluginErr(ERROR_LEVEL, ER_GRP_RPL_PAXOS_SINGLE_LEADER_DIFF_FROM_GRP,
-                   local_member_info->get_allow_single_leader(),
-                   (*all_members_it)->get_allow_single_leader());
       goto cleaning;
     }
   }
@@ -1814,19 +1942,22 @@ void Plugin_gcs_events_handler::disable_read_mode_for_compatible_members(
    * member will continue to be writable even in ERROR state. So lock protects
    * from this situation. */
   MUTEX_LOCK(lock, group_member_mgr->get_update_lock());
-  if (local_member_info->get_recovery_status() ==
-          Group_member_info::MEMBER_ONLINE &&
-      (force_check || *joiner_compatibility_status != COMPATIBLE)) {
-    *joiner_compatibility_status =
-        Compatibility_module::check_version_incompatibility(
-            local_member_info->get_member_version(), lowest_version);
-    /* Some lower version left the group, now this member is new lowest
-     * version. */
-    if (!local_member_info->in_primary_mode() &&
-        *joiner_compatibility_status == COMPATIBLE) {
-      if (disable_server_read_mode(PSESSION_DEDICATED_THREAD)) {
-        LogPluginErr(WARNING_LEVEL,
-                     ER_GRP_RPL_DISABLE_SRV_READ_MODE_RESTRICTED);
+  if (local_member_info->get_role() !=
+      Group_member_info::MEMBER_ROLE_ARBITRATOR) {
+    if (local_member_info->get_recovery_status() ==
+            Group_member_info::MEMBER_ONLINE &&
+        (force_check || *joiner_compatibility_status != COMPATIBLE)) {
+      *joiner_compatibility_status =
+          Compatibility_module::check_version_incompatibility(
+              local_member_info->get_member_version(), lowest_version);
+      /* Some lower version left the group, now this member is new lowest
+       * version. */
+      if (!local_member_info->in_primary_mode() &&
+          *joiner_compatibility_status == COMPATIBLE) {
+        if (disable_server_read_mode(PSESSION_DEDICATED_THREAD)) {
+          LogPluginErr(WARNING_LEVEL,
+                       ER_GRP_RPL_DISABLE_SRV_READ_MODE_RESTRICTED);
+        }
       }
     }
   }

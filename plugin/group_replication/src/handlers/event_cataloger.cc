@@ -28,7 +28,8 @@ int Event_cataloger::initialize() { return 0; }
 
 int Event_cataloger::terminate() { return 0; }
 
-int Event_cataloger::handle_event(Pipeline_event *pevent, Continuation *cont) {
+int Event_cataloger::handle_event(Pipeline_event *pevent, Continuation *cont,
+                                  bool io_buffered) {
   Log_event_type event_type = pevent->get_event_type();
 
   if (event_type == binary_log::TRANSACTION_CONTEXT_EVENT) {
@@ -50,12 +51,12 @@ int Event_cataloger::handle_event(Pipeline_event *pevent, Continuation *cont) {
     }
   }
 
-  next(pevent, cont);
+  next(pevent, cont, io_buffered);
   return 0;
 }
 
-int Event_cataloger::handle_action(Pipeline_action *action) {
-  return (next(action));
+int Event_cataloger::handle_action(Pipeline_action *action, bool io_buffered) {
+  return (next(action, io_buffered));
 }
 
 bool Event_cataloger::is_unique() { return true; }

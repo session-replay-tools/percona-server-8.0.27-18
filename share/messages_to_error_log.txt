@@ -4484,7 +4484,7 @@ ER_GRP_RPL_UPDATE_GTID_SET_ERROR
 ER_GRP_RPL_RECEIVED_SET_MISSING_GTIDS
   eng "There was an error when filling the missing GTIDs on the applier channel received set. Despite not critical, on the long run this may cause performance issues."
 
-OBSOLETE_ER_GRP_RPL_SKIP_COMPUTATION_TRANS_COMMITTED
+ER_GRP_RPL_SKIP_COMPUTATION_TRANS_COMMITTED
   eng "Skipping the computation of the Transactions_committed_all_members field as an older instance of this computation is still ongoing."
 
 ER_GRP_RPL_NULL_PACKET
@@ -11536,21 +11536,6 @@ ER_HEALTH_WARNING_MEMORY_USAGE_LEVEL_2
 ER_HEALTH_WARNING_MEMORY_USAGE_LEVEL_3
   eng "%s: Warning Level 3 (%llu MiB): available=%llu MiB, total=%llu MiB, used=%.2f%%, mysqld=%llu MiB"
 
-ER_GRP_RPL_SET_SINGLE_CONSENSUS_LEADER
-  eng "The member %s:%u, with UUID: %s, was set as the single preferred consensus leader."
-
-ER_GRP_RPL_ERROR_SET_SINGLE_CONSENSUS_LEADER
-  eng "Something went wrong trying to set the member %s:%u, with UUID: %s, as the single preferred consensus leader. Please query the performance_schema.replication_group_communication_information table to see whether the operation took effect, i.e. whether the preferred consensus leader matches the current primary. If not, consider electing a different primary to try again. Please check the error log and GCS_DEBUG_TRACE for more information that may help understanding what went wrong."
-
-ER_GRP_RPL_SET_MULTI_CONSENSUS_LEADER
-  eng "All members were set as consensus leaders."
-
-ER_GRP_RPL_ERROR_SET_MULTI_CONSENSUS_LEADER
-  eng "Something went wrong trying to set all members as consensus leaders. Please query the performance_schema.replication_group_communication_information table to see whether the operation took effect, i.e. whether the consensus leaders match all members. If not, consider resetting the group communication protocol to a version < 8.0.22, or switch to single-primary mode and back again to multi-primary mode, to try again. Please check the error log and GCS_DEBUG_TRACE for more information that may help understanding what went wrong."
-
-ER_GRP_RPL_PAXOS_SINGLE_LEADER_DIFF_FROM_GRP
-  eng "This member is configured with a group_replication_paxos_single_leader option value of '%d' that is different from the group's value ('%d'). This member will now exit the group."
-
 ER_MFA_USER_ATTRIBUTES_CORRUPT
   eng "Invalid and/or corrupted multi factor authentication methods in User_attributes column in mysql.user table. \"%s\"."
 
@@ -11681,6 +11666,29 @@ ER_KEYRING_COMPONENT_CONFIG_PARSE_FAILED
 #
 # End of Percona Server 8.0 server error log messages
 #
+
+#
+# Start of GreatSQL 8.0 server error log messages
+#
+start-error-number 49500
+
+ER_GRP_RPL_MULTI_PRIM_MODE_NOT_ALLOWED_WITH_FAST_MODE
+  eng "It is not allowed to run multiple primary mode with 'group_replication_single_primary_fast_mode' enabled."
+
+ER_GRP_RPL_FAST_MODE_NOT_COMPATIBLE
+  eng "The member is configured with a single_primary_fast_mode option value '%d' not compatible from the group '%d'. The member will now exit the group."
+
+ER_GRP_RPL_CERTIFY_GET_NEXT_GTID
+  eng "Getting group next available gtid is failed."
+
+ER_GRP_RPL_CERTIFY_IS_INITIALIZED
+  eng "Certify initializing is failed."
+
+ER_GRP_RPL_ARBITRATOR_IS_INITIALIZED
+  eng "A primary node with the arbitrator role is not allowed"
+
+ER_GRP_RPL_ZONE_ID_SYNC_MODE_NOT_COMPATIBLE
+  eng "The member is configured with a zone_id_sync_mode option value '%d' not compatible from the group '%d'. The member will now exit the group."
 
 ################################################################################
 # Error numbers 50000 to 51999 are reserved. Please do not use them for
