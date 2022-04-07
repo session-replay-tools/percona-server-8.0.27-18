@@ -284,6 +284,8 @@ void Certifier_broadcast_thread::dispatcher() {
               transaction_committed_all_members.c_str());
         }
       }
+      /* clean-up */
+      delete pipeline_stats;
     }
 
     gc_counter++;
