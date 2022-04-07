@@ -1,0 +1,1 @@
+cmd='<SOURCE_DIR>/configure;--with-pic;--enable-static;CC=/usr/bin/gcc-8 ;CFLAGS=-Wno-implicit-fallthrough -Wno-unused-but-set-variable;--prefix=/mnt/jenkins/workspace/ps8.0-autobuild-RELEASE/test/percona-server/storage/tokudb/PerconaFT/./xz;--libdir=/mnt/jenkins/workspace/ps8.0-autobuild-RELEASE/test/percona-server/storage/tokudb/PerconaFT/./xz/lib'

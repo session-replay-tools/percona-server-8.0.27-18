@@ -1,0 +1,2 @@
+/usr/bin/gcc-ar-8 qc libkmippp.a  CMakeFiles/kmippp.dir/kmippp.cpp.o
+/usr/bin/gcc-ranlib-8 libkmippp.a

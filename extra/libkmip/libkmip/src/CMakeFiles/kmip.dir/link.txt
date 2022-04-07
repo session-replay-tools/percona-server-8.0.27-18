@@ -1,0 +1,2 @@
+/usr/bin/gcc-ar-8 qc libkmip.a  CMakeFiles/kmip.dir/kmip_bio.c.o CMakeFiles/kmip.dir/kmip.c.o CMakeFiles/kmip.dir/kmip_locate.c.o CMakeFiles/kmip.dir/kmip_memset.c.o
+/usr/bin/gcc-ranlib-8 libkmip.a
