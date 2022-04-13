@@ -134,6 +134,8 @@ void Recovery_state_transfer::inform_of_applier_stop(my_thread_id thread_id,
       donor_connection_interface.is_own_event_applier(thread_id)) {
     mysql_mutex_lock(&recovery_lock);
     donor_channel_thread_error = true;
+    LogPluginErrMsg(INFORMATION_LEVEL, ER_LOG_PRINTF_MSG,
+                    "inform_of_applier_stop enter step 1");
     mysql_cond_broadcast(&recovery_condition);
     mysql_mutex_unlock(&recovery_lock);
   }
@@ -156,6 +158,8 @@ void Recovery_state_transfer::inform_of_receiver_stop(my_thread_id thread_id) {
       donor_connection_interface.is_own_event_receiver(thread_id)) {
     mysql_mutex_lock(&recovery_lock);
     donor_channel_thread_error = true;
+    LogPluginErrMsg(INFORMATION_LEVEL, ER_LOG_PRINTF_MSG,
+                    "inform_of_receiver_stop enter step 1");
     mysql_cond_broadcast(&recovery_condition);
     mysql_mutex_unlock(&recovery_lock);
   }
@@ -208,6 +212,8 @@ void Recovery_state_transfer::abort_state_transfer() {
   // Break the wait for view change event
   mysql_mutex_lock(&recovery_lock);
   recovery_aborted = true;
+  LogPluginErrMsg(INFORMATION_LEVEL, ER_LOG_PRINTF_MSG,
+                  "abort_state_transfer enter step 1");
   mysql_cond_broadcast(&recovery_condition);
   mysql_mutex_unlock(&recovery_lock);
 }
@@ -292,6 +298,8 @@ void Recovery_state_transfer::end_state_transfer() {
 
   mysql_mutex_lock(&recovery_lock);
   donor_transfer_finished = true;
+  LogPluginErrMsg(INFORMATION_LEVEL, ER_LOG_PRINTF_MSG,
+                  "end_state_transfer enter step 1");
   mysql_cond_broadcast(&recovery_condition);
   mysql_mutex_unlock(&recovery_lock);
 }
@@ -302,6 +310,8 @@ void Recovery_state_transfer::donor_failover() {
   // Awake the recovery process so it can loop again to connect to another donor
   mysql_mutex_lock(&recovery_lock);
   on_failover = true;
+  LogPluginErrMsg(INFORMATION_LEVEL, ER_LOG_PRINTF_MSG,
+                  "donor_failover enter step 1");
   mysql_cond_broadcast(&recovery_condition);
   mysql_mutex_unlock(&recovery_lock);
 }
@@ -531,6 +541,8 @@ int Recovery_state_transfer::initialize_donor_connection(std::string hostname,
 
 int Recovery_state_transfer::start_recovery_donor_threads() {
   DBUG_TRACE;
+  LogPluginErrMsg(INFORMATION_LEVEL, ER_LOG_PRINTF_MSG,
+                  "start_recovery_donor_threads enter step 1");
 
   int error =
       donor_connection_interface.start_threads(true, true, &view_id, true);
@@ -600,6 +612,8 @@ int Recovery_state_transfer::start_recovery_donor_threads() {
       LogPluginErr(ERROR_LEVEL, ER_GRP_RPL_STARTING_GRP_REC);
     }
   }
+  LogPluginErrMsg(INFORMATION_LEVEL, ER_LOG_PRINTF_MSG,
+                  "start_recovery_donor_threads enter step 2");
 
   return error;
 }
@@ -682,6 +696,9 @@ State_transfer_status Recovery_state_transfer::state_transfer(
       }
     }
 
+    LogPluginErrMsg(INFORMATION_LEVEL, ER_LOG_PRINTF_MSG,
+                    "state_transfer enter loop step 1");
+
     // If the donor left, just terminate the threads with no log purging
     if (on_failover) {
       // Unsubscribe the listener until it connects again.
@@ -698,6 +715,8 @@ State_transfer_status Recovery_state_transfer::state_transfer(
         /* purecov: end */
       }
     }
+    LogPluginErrMsg(INFORMATION_LEVEL, ER_LOG_PRINTF_MSG,
+                    "state_transfer enter loop step 2");
 
     stage_handler.set_stage(info_GR_STAGE_recovery_connecting_to_donor.m_key,
                             __FILE__, __LINE__, 0, 0);
@@ -708,6 +727,9 @@ State_transfer_status Recovery_state_transfer::state_transfer(
         break;
       }
     }
+    LogPluginErrMsg(INFORMATION_LEVEL, ER_LOG_PRINTF_MSG,
+                    "state_transfer enter loop step 3");
+
     stage_handler.set_stage(info_GR_STAGE_recovery_transferring_state.m_key,
                             __FILE__, __LINE__, 0, 0);
 
@@ -730,6 +752,10 @@ State_transfer_status Recovery_state_transfer::state_transfer(
       mysql_cond_wait(&recovery_condition, &recovery_lock);
     }
     mysql_mutex_unlock(&recovery_lock);
+
+    LogPluginErrMsg(INFORMATION_LEVEL, ER_LOG_PRINTF_MSG,
+                    "state_transfer enter loop step 4");
+
   }  // if the current connection was terminated, connect again
 
   channel_observation_manager->unregister_channel_observer(
@@ -746,6 +772,9 @@ State_transfer_status Recovery_state_transfer::state_transfer(
     error = stop_error;
 
   connected_to_donor = false;
+
+  LogPluginErrMsg(INFORMATION_LEVEL, ER_LOG_PRINTF_MSG,
+                  "state_transfer enter step 5");
 
   return error;
 }

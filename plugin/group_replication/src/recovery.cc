@@ -235,6 +235,8 @@ int Recovery_module::recovery_thread_handle() {
   mysql_mutex_unlock(&run_lock);
 
   /* Step 1 */
+  LogPluginErrMsg(INFORMATION_LEVEL, ER_LOG_PRINTF_MSG,
+                  "recovery_thread_handle enter step 1");
 
   if (!is_arbitrator_role()) {
     // wait for the appliers suspension
@@ -272,6 +274,8 @@ int Recovery_module::recovery_thread_handle() {
 #endif  // NDEBUG
 
   /* Step 2 */
+  LogPluginErrMsg(INFORMATION_LEVEL, ER_LOG_PRINTF_MSG,
+                  "recovery_thread_handle enter step 2");
 
   if (number_of_members == 1) {
     if (is_arbitrator_role()) {
@@ -287,6 +291,8 @@ int Recovery_module::recovery_thread_handle() {
   }
 
   /* Step 3 */
+  LogPluginErrMsg(INFORMATION_LEVEL, ER_LOG_PRINTF_MSG,
+                  "recovery_thread_handle enter step 3");
 
   if (!is_arbitrator_role()) {
     m_state_transfer_return =
@@ -313,6 +319,8 @@ int Recovery_module::recovery_thread_handle() {
 single_member_online:
 
   /* Step 4 */
+  LogPluginErrMsg(INFORMATION_LEVEL, ER_LOG_PRINTF_MSG,
+                  "recovery_thread_handle  enter step 4");
 
   /**
     If recovery fails or is aborted, it never makes sense to awake the applier,
@@ -348,6 +356,8 @@ single_member_online:
 cleanup:
 
   /* Step 5 */
+  LogPluginErrMsg(INFORMATION_LEVEL, ER_LOG_PRINTF_MSG,
+                  "recovery_thread_handle  enter step 5");
 
   // if finished, declare the member online
   if (!recovery_aborted && !error) {
@@ -355,6 +365,8 @@ cleanup:
   }
 
   /* Step 6 */
+  LogPluginErrMsg(INFORMATION_LEVEL, ER_LOG_PRINTF_MSG,
+                  "recovery_thread_handle  enter step 6");
 
   /*
    If recovery failed, it's no use to continue in the group as the member cannot
@@ -374,6 +386,8 @@ cleanup:
 #endif  // NDEBUG
 
   /* Step 7 */
+  LogPluginErrMsg(INFORMATION_LEVEL, ER_LOG_PRINTF_MSG,
+                  "recovery_thread_handle  enter step 7");
 
   clean_recovery_thread_context();
 
@@ -437,7 +451,8 @@ int Recovery_module::set_retrieved_cert_info(void *info) {
     return 1;
     /* purecov: end */
   }
-
+  LogPluginErrMsg(INFORMATION_LEVEL, ER_LOG_PRINTF_MSG,
+                  "set_retrieved_cert_info calls end_state_transfer");
   recovery_state_transfer.end_state_transfer();
 
   return 0;

@@ -45,6 +45,9 @@
 char applier_module_channel_name[] = "group_replication_applier";
 bool applier_thread_is_exiting = false;
 
+#define RECOVERING_APPLIER_BUFFER_SIZE 65536
+#define RECOVERING_APPLIER_BUFFER_MIN_SIZE 10
+
 static void *launch_handler_thread(void *arg) {
   Applier_module *handler = (Applier_module *)arg;
   handler->applier_thread_handle();
@@ -521,10 +524,11 @@ int Applier_module::applier_thread_handle() {
   Continuation *cont = nullptr;
   Packet *packet = nullptr;
   bool loop_termination = false, remaining_packets_inited = false,
-       io_buffered = false;
+       io_buffered = false, io_buffered_allowed = false;
   int packet_application_error = 0, delayed = 0;
   int remaining_packets_to_be_processed = 0;
-  size_t applier_batch_size_threshold = 0;
+  size_t applier_batch_size_threshold = 0, apply_queue_size = 0,
+         recovering_queue_size = 0, recovering_processed_cnt = 0;
 
   applier_error = setup_pipeline_handlers();
 
@@ -598,9 +602,27 @@ int Applier_module::applier_thread_handle() {
     /* Delayed packets are activated by later packets */
     this->incoming->front(&packet);  // blocking
 
-    applier_batch_size_threshold = get_applier_batch_size_threshold_var();
+    {
+      applier_batch_size_threshold = get_applier_batch_size_threshold_var();
+      apply_queue_size = this->incoming->size();
+      if (!io_buffered_allowed) {
+        if (applier_batch_size_threshold < RECOVERING_APPLIER_BUFFER_SIZE) {
+          applier_batch_size_threshold = RECOVERING_APPLIER_BUFFER_SIZE;
+        }
+        if (recovering_queue_size == 0) {
+          recovering_queue_size = apply_queue_size;
+        }
+        if (recovering_processed_cnt >= recovering_queue_size) {
+          if (apply_queue_size < RECOVERING_APPLIER_BUFFER_MIN_SIZE) {
+            io_buffered_allowed = true;
+          }
+        }
+        recovering_processed_cnt++;
+      }
+    }
+
     if (applier_batch_size_threshold > 0 &&
-        this->incoming->size() > applier_batch_size_threshold) {
+        apply_queue_size > applier_batch_size_threshold) {
       if (packet->get_packet_type() == DATA_PACKET_TYPE) {
         io_buffered = true;
       } else {
