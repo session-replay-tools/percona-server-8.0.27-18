@@ -799,6 +799,8 @@ int initialize_plugin_and_join(
     assert(!debug_sync_set_action(current_thd, STRING_WITH_LEN(act)));
   });
 
+  gcs_module->update_xcom_cache_mode_through_gcs(ov.xcom_cache_mode_var);
+
   if ((error = start_group_communication())) {
     LogPluginErr(ERROR_LEVEL, ER_GRP_RPL_FAILED_TO_START_COMMUNICATION_ENGINE);
     goto err;
@@ -4082,6 +4084,42 @@ static void update_zone_id(MYSQL_THD, SYS_VAR *, void *var_ptr,
   mysql_mutex_unlock(&lv.plugin_running_mutex);
 }
 
+static int check_xcom_cache_mode(MYSQL_THD, SYS_VAR *, void *save,
+                                 struct st_mysql_value *value) {
+  DBUG_TRACE;
+  if (plugin_running_mutex_trylock()) return 1;
+  if (plugin_is_group_replication_running()) {
+    mysql_mutex_unlock(&lv.plugin_running_mutex);
+    my_message(ER_GROUP_REPLICATION_RUNNING,
+               "Cannot change group_replication_xcom_cache_mode while "
+               "Group Replication is running.",
+               MYF(0));
+    return 1;
+  }
+
+  longlong in_val = 0;
+  value->val_int(value, &in_val);
+  if (in_val < 0 || in_val > 4) {
+    mysql_mutex_unlock(&lv.plugin_running_mutex);
+    return 1;
+  }
+  *(uint *)save = in_val;
+  mysql_mutex_unlock(&lv.plugin_running_mutex);
+  return 0;
+}
+
+static void update_xcom_cache_mode(MYSQL_THD, SYS_VAR *, void *var_ptr,
+                                   const void *save) {
+  DBUG_TRACE;
+
+  if (plugin_running_mutex_trylock()) return;
+
+  uint in_val = *static_cast<const uint *>(save);
+  *static_cast<uint *>(var_ptr) = in_val;
+
+  mysql_mutex_unlock(&lv.plugin_running_mutex);
+}
+
 static int check_zone_id_sync_mode(MYSQL_THD, SYS_VAR *, void *save,
                                    struct st_mysql_value *value) {
   DBUG_TRACE;
@@ -5051,6 +5089,18 @@ static MYSQL_SYSVAR_UINT(zone_id,        /* name */
                          8U,             /* max */
                          0);             /* block */
 
+static MYSQL_SYSVAR_UINT(xcom_cache_mode,        /* name */
+                         ov.xcom_cache_mode_var, /* var */
+                         PLUGIN_VAR_OPCMDARG |
+                             PLUGIN_VAR_PERSIST_AS_READ_ONLY, /* optional var */
+                         "The xcom cache mode for this node.",
+                         check_xcom_cache_mode,  /* check func */
+                         update_xcom_cache_mode, /* update func */
+                         0U,                     /* default */
+                         0U,                     /* min */
+                         4U,                     /* max */
+                         0);                     /* block */
+
 // TODO: use enum
 static MYSQL_SYSVAR_BOOL(zone_id_sync_mode,        /* name */
                          ov.zone_id_sync_mode_var, /* var */
@@ -5486,6 +5536,7 @@ static SYS_VAR *group_replication_system_vars[] = {
     MYSQL_SYSVAR(member_weight),
     MYSQL_SYSVAR(zone_id),
     MYSQL_SYSVAR(zone_id_sync_mode),
+    MYSQL_SYSVAR(xcom_cache_mode),
     MYSQL_SYSVAR(single_primary_fast_mode),
     MYSQL_SYSVAR(flow_control_min_quota),
     MYSQL_SYSVAR(flow_control_min_recovery_quota),

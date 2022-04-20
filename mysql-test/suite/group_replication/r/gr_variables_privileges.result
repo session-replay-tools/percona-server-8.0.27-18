@@ -161,6 +161,8 @@ SET GLOBAL group_replication_unreachable_majority_timeout = @@GLOBAL.group_repli
 ERROR 42000: Access denied; you need (at least one of) the SUPER or SYSTEM_VARIABLES_ADMIN privilege(s) for this operation
 SET GLOBAL group_replication_view_change_uuid = @@GLOBAL.group_replication_view_change_uuid;
 ERROR 42000: Access denied; you need (at least one of) the SUPER or SYSTEM_VARIABLES_ADMIN privilege(s) for this operation
+SET GLOBAL group_replication_xcom_cache_mode = @@GLOBAL.group_replication_xcom_cache_mode;
+ERROR 42000: Access denied; you need (at least one of) the SUPER or SYSTEM_VARIABLES_ADMIN privilege(s) for this operation
 SET GLOBAL group_replication_zone_id = @@GLOBAL.group_replication_zone_id;
 ERROR 42000: Access denied; you need (at least one of) the SUPER or SYSTEM_VARIABLES_ADMIN privilege(s) for this operation
 SET GLOBAL group_replication_zone_id_sync_mode = @@GLOBAL.group_replication_zone_id_sync_mode;
@@ -250,6 +252,7 @@ SET GLOBAL group_replication_tls_source = @@GLOBAL.group_replication_tls_source;
 SET GLOBAL group_replication_transaction_size_limit = @@GLOBAL.group_replication_transaction_size_limit;
 SET GLOBAL group_replication_unreachable_majority_timeout = @@GLOBAL.group_replication_unreachable_majority_timeout;
 SET GLOBAL group_replication_view_change_uuid = @@GLOBAL.group_replication_view_change_uuid;
+SET GLOBAL group_replication_xcom_cache_mode = @@GLOBAL.group_replication_xcom_cache_mode;
 SET GLOBAL group_replication_zone_id = @@GLOBAL.group_replication_zone_id;
 SET GLOBAL group_replication_zone_id_sync_mode = @@GLOBAL.group_replication_zone_id_sync_mode;
 

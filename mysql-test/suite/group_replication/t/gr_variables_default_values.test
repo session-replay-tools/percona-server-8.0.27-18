@@ -90,7 +90,7 @@ SET @@GLOBAL.group_replication_communication_max_message_size= default;
 --let $saved_gr_communication_stack = `SELECT @@GLOBAL.group_replication_communication_stack;`
 
 # Total number of GR variables.
---let $total_gr_vars= 71
+--let $total_gr_vars= 72
 
 --echo #
 --echo # Test Unit#1

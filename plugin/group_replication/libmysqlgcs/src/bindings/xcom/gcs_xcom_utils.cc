@@ -132,6 +132,10 @@ void Gcs_xcom_utils::update_zone_id_for_paxos_node(const char *ip, int zone_id,
   update_zone_id_for_consensus(ip, zone_id, zone_id_sync_mode);
 }
 
+void Gcs_xcom_utils::update_xcom_cache_mode_for_paxos(int new_mode) {
+  set_max_cache_mode(new_mode);
+}
+
 int Gcs_xcom_utils::init_net() { return ::init_net(); }
 
 int Gcs_xcom_utils::deinit_net() { return ::deinit_net(); }

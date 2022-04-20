@@ -73,13 +73,28 @@ static linkage protected_lru = {
 static linkage probation_lru = {
     0, &probation_lru, &probation_lru}; /* Head of LRU chain of cache misses */
 
-static size_t size_decrement = MAX_CACHE_SIZE / 2000;
+static size_t size_decrement = MAX_CACHE_SIZE / 500;
 
 #define BUCKETS MAX_CACHE_SIZE
+
+static size_t buckets = BUCKETS;
+
+/* Use vars instead of defines for unit testing */
+static uint64_t dec_threshold_length = DEC_THRESHOLD_LENGTH;
+static float min_target_occupation = MIN_TARGET_OCCUPATION;
+static float dec_threshold_size = DEC_THRESHOLD_SIZE;
+static float min_length_threshold = MIN_LENGTH_THRESHOLD;
 
 static inline int can_deallocate(lru_machine *link_iter);
 static size_t do_shrink_cache(bool force);
 static pax_machine *hash_out(pax_machine *p);
+
+void set_max_cache_mode(int x) {
+  buckets = BUCKETS << x;
+  dec_threshold_length = DEC_THRESHOLD_LENGTH << x;
+  G_INFO("buckets:%lu, dec_threshold_length:%lu", buckets,
+         dec_threshold_length);
+}
 
 synode_no cache_get_last_removed() { return last_removed_cache; }
 
@@ -106,8 +121,8 @@ struct stack_machine {
 
 static void hash_init(stack_machine *hash_bucket) {
   size_t i;
-  hash_bucket->pax_hash = (linkage *)malloc(sizeof(linkage) * BUCKETS);
-  for (i = 0; i < BUCKETS; i++) {
+  hash_bucket->pax_hash = (linkage *)malloc(sizeof(linkage) * buckets);
+  for (i = 0; i < buckets; i++) {
     link_init(&hash_bucket->pax_hash[i], TYPE_HASH("pax_machine"));
   }
 }
@@ -119,7 +134,7 @@ static unsigned int synode_hash(synode_no synode) {
      undefined values */
   return (unsigned int)(4711 * synode.node + 5 * synode.group_id +
                         synode.msgno) %
-         (unsigned int)BUCKETS;
+         (unsigned int)buckets;
 }
 
 static pax_machine *hash_in(pax_machine *pm) {
@@ -564,7 +579,7 @@ uint64_t set_max_cache_size(uint64_t x) {
 
 static void expand_lru() {
   uint64_t i;
-  for (i = 0; i < BUCKETS; i++) {
+  for (i = 0; i < buckets; i++) {
     lru_machine *l = (lru_machine *)calloc(1, sizeof(lru_machine));
     link_init(&l->lru_link, TYPE_HASH("lru_machine"));
     link_into(&l->lru_link, &probation_lru);
@@ -582,12 +597,6 @@ static void add_stack_machine(uint64_t start_msgno) {
   link_follow(&hash_bucket->stack_link, &hash_stack);
 }
 
-/* Use vars instead of defines for unit testing */
-static uint64_t dec_threshold_length = DEC_THRESHOLD_LENGTH;
-static float min_target_occupation = MIN_TARGET_OCCUPATION;
-static float dec_threshold_size = DEC_THRESHOLD_SIZE;
-static float min_length_threshold = MIN_LENGTH_THRESHOLD;
-
 /* Shrink the cache if appropriate, else return error code */
 uint16_t check_decrease() {
   /* Do not decrease before dec_threshold_length */
@@ -599,7 +608,7 @@ uint16_t check_decrease() {
   if ((float)occupation >= (float)cache_length * min_target_occupation)
     return CACHE_HIGH_OCCUPATION;
   /* Resulting length high enough */
-  if (((float)cache_length - (float)BUCKETS) * min_length_threshold <=
+  if (((float)cache_length - (float)buckets) * min_length_threshold <=
       (float)occupation)
     return CACHE_RESULT_LOW;
   /* Skip if cache is (likely) still increasing. */

@@ -395,8 +395,6 @@ int detector_task(task_arg arg [[maybe_unused]]) {
           G_INFO("call deliver_view_msg in detector");
           deliver_view_msg(x_site); /* To application */
         }
-      } else {
-        G_INFO("unexpected reach here without deliver_view_msg");
       }
     }
     TIMED_TASK_WAIT(&detector_wait, 1.0);

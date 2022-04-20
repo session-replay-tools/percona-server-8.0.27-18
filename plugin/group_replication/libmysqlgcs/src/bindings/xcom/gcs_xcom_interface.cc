@@ -1327,6 +1327,10 @@ void Gcs_xcom_interface::update_zone_id_for_xcom_node(const char *ip,
   Gcs_xcom_utils::update_zone_id_for_paxos_node(ip, zone_id, zone_id_sync_mode);
 }
 
+void Gcs_xcom_interface::update_xcom_cache_mode(int new_mode) {
+  Gcs_xcom_utils::update_xcom_cache_mode_for_paxos(new_mode);
+}
+
 void cb_xcom_receive_data(synode_no message_id, node_set nodes, u_int size,
                           synode_no last_removed, char *data) {
   const site_def *site = find_site_def(message_id);

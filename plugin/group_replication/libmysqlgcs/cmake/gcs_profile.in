@@ -64,7 +64,7 @@ enum {
   MAX_BATCH_APP_DATA = 512,   /* Limit nr. of batched elements */
   MAX_DEAD = 10,
   PROPOSERS = 10,         /* The number of proposers on one node */
-  MAX_CACHE_SIZE = 2000000 /* Maximum cache size */
+  MAX_CACHE_SIZE = 500000 /* Default maximum cache size */
 };
 
 /* How long to wait for snapshots when trying to find the best node to recover

@@ -81,6 +81,8 @@ class Gcs_xcom_utils {
   static void update_zone_id_for_paxos_node(const char *ip, int zone_id,
                                             bool zone_id_sync_mode);
 
+  static void update_xcom_cache_mode_for_paxos(int new_mode);
+
   static int init_net();
   static int deinit_net();
 

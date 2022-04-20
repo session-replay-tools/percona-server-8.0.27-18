@@ -99,6 +99,7 @@ uint64_t add_cache_size(pax_machine *p);
 uint64_t sub_cache_size(pax_machine *p);
 int above_cache_limit();
 uint64_t set_max_cache_size(uint64_t x);
+void set_max_cache_mode(int x);
 int was_removed_from_cache(synode_no x);
 uint16_t check_decrease();
 void do_cache_maintenance();

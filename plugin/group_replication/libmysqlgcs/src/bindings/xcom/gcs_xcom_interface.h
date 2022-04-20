@@ -213,6 +213,8 @@ class Gcs_xcom_interface : public Gcs_interface {
   void update_zone_id_for_xcom_node(const char *ip, int zone_id,
                                     bool zone_id_sync_mode) override;
 
+  void update_xcom_cache_mode(int new_mode) override;
+
   void set_xcom_group_information(const std::string &group_id);
 
   Gcs_group_identifier *get_xcom_group_information(const u_long group_id);

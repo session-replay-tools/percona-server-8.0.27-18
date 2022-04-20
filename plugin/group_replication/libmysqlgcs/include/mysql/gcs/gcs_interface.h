@@ -211,6 +211,8 @@ class Gcs_interface {
   virtual void update_zone_id_for_xcom_node(const char *ip, int zone_id,
                                             bool zone_id_sync_mode) = 0;
 
+  virtual void update_xcom_cache_mode(int new_mode) = 0;
+
   /**
    * @brief Set the up runtime resources
    *

@@ -369,6 +369,8 @@ class Gcs_operations {
   void update_zone_id_through_gcs(const char *ip, int zone_id,
                                   bool zone_id_sync_mode);
 
+  void update_xcom_cache_mode_through_gcs(int new_mode);
+
  private:
   /**
     Internal function that configures the debug options that shall be used by

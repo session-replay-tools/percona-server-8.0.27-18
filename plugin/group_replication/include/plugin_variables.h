@@ -230,6 +230,8 @@ struct plugin_options_variables {
 #define MAX_FLP_TIMEOUT 60
   ulong communication_flp_timeout_var;
 
+  uint xcom_cache_mode_var;
+
   bool single_primary_mode_var;
   bool enforce_update_everywhere_checks_var;
   bool arbitrator_role_var;

@@ -804,3 +804,11 @@ void Gcs_operations::update_zone_id_through_gcs(const char *ip, int zone_id,
   }
   gcs_operations_lock->unlock();
 }
+
+void Gcs_operations::update_xcom_cache_mode_through_gcs(int new_mode) {
+  gcs_operations_lock->wrlock();
+  if (gcs_interface != nullptr && gcs_interface->is_initialized()) {
+    gcs_interface->update_xcom_cache_mode(new_mode);
+  }
+  gcs_operations_lock->unlock();
+}
