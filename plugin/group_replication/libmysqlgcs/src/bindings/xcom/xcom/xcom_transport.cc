@@ -1012,6 +1012,28 @@ int send_to_others(site_def const *s, pax_msg *p, const char *dbg) {
   return retval;
 }
 
+int send_to_filtered_others(site_def const *s, pax_msg *p,
+                            node_no filtered_node,
+                            const char *dbg [[maybe_unused]]) {
+  int retval = 0;
+  node_no i = 0;
+#ifdef MAXACCEPT
+  node_no max = MIN(get_maxnodes(s), MAXACCEPT);
+#else
+  node_no max;
+  assert(s);
+  max = get_maxnodes(s);
+#endif
+  for (i = 0; i < max; i++) {
+    if (i != s->nodeno && i != filtered_node) {
+      IFDBG(D_NONE, FN; STRLIT(dbg); STRLIT(" "); NDBG(i, u); NDBG(max, u);
+            PTREXP(p));
+      retval = _send_server_msg(s, i, p);
+    }
+  }
+  return retval;
+}
+
 /* Send to some other live server, round robin */
 int send_to_someone(site_def const *s, pax_msg *p,
                     const char *dbg [[maybe_unused]]) {

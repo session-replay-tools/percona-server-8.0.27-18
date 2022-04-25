@@ -48,6 +48,13 @@ int synode_lt(synode_no x, synode_no y) {
   return (x.msgno < y.msgno) || (x.msgno == y.msgno && x.node < y.node);
 }
 
+int synode_msgno_not_gt(synode_no x, synode_no y) {
+  assert(x.group_id == 0 || y.group_id == 0 || x.group_id == y.group_id);
+  return x.msgno <= y.msgno;
+}
+
+int synode_msgno_gt(synode_no x, synode_no y) { return x.msgno > y.msgno; }
+
 int synode_gt(synode_no x, synode_no y) {
   assert(x.group_id == 0 || y.group_id == 0 || x.group_id == y.group_id);
   return (x.msgno > y.msgno) || (x.msgno == y.msgno && x.node > y.node);

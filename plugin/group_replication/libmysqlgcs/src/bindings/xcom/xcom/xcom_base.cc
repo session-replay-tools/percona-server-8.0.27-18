@@ -383,6 +383,7 @@ extern void bit_set_or(bit_set *x, bit_set const *y);
 
 int xcom_shutdown = 0;  /* Xcom_Shutdown flag */
 synode_no executed_msg; /* The message we are waiting to execute */
+synode_no max_skip_msg; /* Max message number skipped so far */
 synode_no max_synode;   /* Max message number seen so far */
 task_env *boot = NULL;
 task_env *detector = NULL;
@@ -403,6 +404,7 @@ void init_base_vars() {
   xcom_shutdown = 0;          /* Xcom_Shutdown flag */
   executed_msg = null_synode; /* The message we are waiting to execute */
   max_synode = null_synode;   /* Max message number seen so far */
+  max_skip_msg = null_synode;
   boot = NULL;
   detector = NULL;
   killer = NULL;
@@ -602,6 +604,10 @@ static synode_no incr_msgno(synode_no msgno) {
       find_site_def(ret)); /* In case site and node number has changed */
   return ret;
 }
+
+static const int MAX_ARRAY_LEN = 1024;
+static int participate_paxos[MAX_ARRAY_LEN];
+int all_nodes_valid = 0;
 
 synode_no incr_synode(synode_no synode) {
   synode_no ret = synode;
@@ -861,6 +867,7 @@ void init_xcom_base() {
   xcom_shutdown = 0;
   current_message = null_synode;
   executed_msg = null_synode;
+  max_skip_msg = null_synode;
   delivered_msg = null_synode;
   last_delivered_msg = null_synode;
   max_synode = null_synode;
@@ -1500,6 +1507,7 @@ void init_prepare_msg(pax_msg *p) { prepare(p, prepare_op); }
 static int prepare_msg(pax_msg *p) {
   init_prepare_msg(p);
   /* p->msg_type = normal; */
+  participate_paxos[p->synode.msgno % MAX_ARRAY_LEN] = 1;
   return send_to_acceptors(p, "prepare_msg");
 }
 
@@ -1523,6 +1531,11 @@ static int skip_msg(pax_msg *p) {
   IFDBG(D_NONE, FN; STRLIT("skipping message "); SYCEXP(p->synode));
   p->msg_type = no_op;
   return send_to_all(p, "skip_msg");
+}
+
+static int send_skip_msg_to_others(site_def const *site, pax_msg *p,
+                                   node_no filtered_node) {
+  return send_to_filtered_others(site, p, filtered_node, "skip_msg");
 }
 
 static void brand_app_data(pax_msg *p) {
@@ -1557,6 +1570,7 @@ void init_propose_msg(pax_msg *p) {
 }
 
 static int send_propose_msg(pax_msg *p) {
+  participate_paxos[p->synode.msgno % MAX_ARRAY_LEN] = 1;
   return send_to_acceptors(p, "propose_msg");
 }
 
@@ -4206,14 +4220,20 @@ static void handle_ack_prepare(site_def const *site, pax_machine *p,
 /* #define AUTO_MSG(p,synode) {if(!(p)){replace_pax_msg(&(p),
  * pax_msg_new(synode, site));} */
 
-static pax_msg *create_ack_accept_msg(pax_msg *m, synode_no synode) {
+static pax_msg *create_ack_accept_msg(pax_msg *m, synode_no synode,
+                                      bool skip_flag) {
   CREATE_REPLY(m);
-  reply->op = ack_accept_op;
+  if (skip_flag) {
+    reply->op = multi_ack_accept_op;
+  } else {
+    reply->op = ack_accept_op;
+  }
   reply->synode = synode;
   return reply;
 }
 
-pax_msg *handle_simple_accept(pax_machine *p, pax_msg *m, synode_no synode) {
+pax_msg *handle_simple_accept(pax_machine *p, pax_msg *m, synode_no synode,
+                              bool skip_flag) {
   pax_msg *reply = NULL;
   if (finished(p)) { /* We have learned a value */
     reply = create_learn_msg_for_ignorant_node(p, m, synode);
@@ -4224,7 +4244,7 @@ pax_msg *handle_simple_accept(pax_machine *p, pax_msg *m, synode_no synode) {
           BALCEXP(m->proposal));
     p->last_modified = task_now();
     replace_pax_msg(&p->acceptor.msg, m);
-    reply = create_ack_accept_msg(m, synode);
+    reply = create_ack_accept_msg(m, synode, skip_flag);
   }
   return reply;
 }
@@ -4245,7 +4265,36 @@ static void handle_accept(site_def const *site, pax_machine *p,
           add_ballot_event(p->acceptor.promise););
 
   {
-    pax_msg *reply = handle_simple_accept(p, m, m->synode);
+    bool skip_flag = false;
+    if (site->nodeno != m->synode.node && m->synode.node == m->from &&
+        all_nodes_valid) {
+      if (participate_paxos[m->synode.msgno % MAX_ARRAY_LEN] == 0) {
+        if (link_empty(&(prop_input_queue.data))) {
+          synode_no msg_no = m->synode;
+          msg_no.node = site->nodeno;
+          if (synode_msgno_not_gt(executed_msg, msg_no)) {
+            if (synode_msgno_gt(msg_no, max_skip_msg)) {
+              skip_flag = true;
+              pax_machine *pm = get_cache(msg_no);
+              if (pm) {
+                pax_msg *msg = pax_msg_new(msg_no, site);
+                prepare(msg, skip_op);
+                msg->msg_type = no_op;
+                send_skip_msg_to_others(site, msg, m->synode.node);
+                handle_skip(site, pm, msg);
+                participate_paxos[m->synode.msgno % MAX_ARRAY_LEN] = 1;
+                max_skip_msg = msg_no;
+              }
+            }
+          }
+        }
+      }
+    }
+
+    if (m->synode.msgno > 0) {
+      participate_paxos[(m->synode.msgno - 1) % MAX_ARRAY_LEN] = 0;
+    }
+    pax_msg *reply = handle_simple_accept(p, m, m->synode, skip_flag);
     if (reply != NULL) SEND_REPLY;
   }
 }
@@ -4263,6 +4312,7 @@ pax_msg *handle_simple_ack_accept(site_def const *site, pax_machine *p,
   }
   return learn_msg;
 }
+
 static void handle_ack_accept(site_def const *site, pax_machine *p,
                               pax_msg *m) {
   ADD_DBG(D_CONS, add_synode_event(p->synode);
@@ -5254,6 +5304,7 @@ pax_msg *dispatch_op(site_def const *site, pax_msg *p, linkage *reply_queue) {
       }
       break;
     case ack_accept_op:
+    case multi_ack_accept_op:
       if (in_front || !is_cached(p->synode)) break;
       pm = get_cache(p->synode);
       if (!pm) {
@@ -5264,6 +5315,24 @@ pax_msg *dispatch_op(site_def const *site, pax_msg *p, linkage *reply_queue) {
       if (!pm->proposer.msg) break;
       assert(pm && pm->proposer.msg);
       handle_ack_accept(site, pm, p);
+
+      if (p->op == multi_ack_accept_op) {
+        synode_no new_synode;
+        new_synode.node = p->from;
+        new_synode.msgno = p->synode.msgno;
+        new_synode.group_id = p->synode.group_id;
+        pax_machine *pm_next = get_cache(new_synode);
+        if (!pm_next) {
+          no_cache_abort = 1;
+          G_INFO("pm next is nill for op:%d", p->op);
+          break;
+        }
+        pax_msg *msg = pax_faked_msg_new(new_synode, p->from);
+        if (p->force_delivery) pm_next->force_delivery = 1;
+        prepare(msg, skip_op);
+        msg->msg_type = no_op;
+        handle_skip(site, pm_next, msg);
+      }
       break;
     case recover_learn_op:
       IFDBG(D_NONE, FN; STRLIT("recover_learn_op receive "); SYCEXP(p->synode));

@@ -413,7 +413,8 @@ void init_propose_msg(pax_msg *p);
  * message of the Paxos protocol) if the Acceptor accepts the Accept
  * @retval NULL otherwise
  */
-pax_msg *handle_simple_accept(pax_machine *p, pax_msg *m, synode_no synode);
+pax_msg *handle_simple_accept(pax_machine *p, pax_msg *m, synode_no synode,
+                              bool skip_flag);
 /**
  * Process the incoming acknowledge from an Acceptor to a sent Accept, as in
  * the message for Phase 2 (b) of the Paxos protocol. Executed by Proposers.

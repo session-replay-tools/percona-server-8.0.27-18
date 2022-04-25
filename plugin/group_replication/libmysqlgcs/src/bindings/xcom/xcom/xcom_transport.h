@@ -120,6 +120,8 @@ int send_to_others(site_def const *s, pax_msg *p, const char *dbg);
 int send_to_someone(site_def const *s, pax_msg *p, const char *dbg);
 int send_to_self_site(site_def const *s, pax_msg *p);
 int send_to_all_except_self(site_def const *s, pax_msg *p, const char *dbg);
+int send_to_filtered_others(site_def const *s, pax_msg *p,
+                            node_no filtered_node, const char *dbg);
 
 void wakeup_sender();
 int sender_task(task_arg arg);

@@ -55,6 +55,7 @@
 extern task_env *detector;
 extern int xcom_shutdown;
 extern linkage detector_wait;
+extern int all_nodes_valid;
 
 /* See if node has been suspiciously still for some time */
 int may_be_dead(detector_state const ds, node_no i, double seconds, int silent,
@@ -239,9 +240,13 @@ static void check_global_node_set(site_def *site, int *notify) {
   u_int i;
   u_int nodes = get_maxnodes(site);
 
+  all_nodes_valid = 1;
   site->global_node_count = 0;
   for (i = 0; i < nodes && i < site->global_node_set.node_set_len; i++) {
     int detect = detect_node_timeout(site, i);
+    if (!detect) {
+      all_nodes_valid = 0;
+    }
     IFDBG(
         D_DETECT, if (i == 0) {
           FN;
@@ -261,8 +266,12 @@ static void check_local_node_set(site_def *site, int *notify) {
   u_int i;
   u_int nodes = get_maxnodes(site);
 
+  all_nodes_valid = 1;
   for (i = 0; i < nodes && i < site->global_node_set.node_set_len; i++) {
     int detect = detect_node_timeout(site, i);
+    if (!detect) {
+      all_nodes_valid = 0;
+    }
     if (site->local_node_set.node_set_val[i] != detect) {
       site->local_node_set.node_set_val[i] = detect;
       *notify = 1;
@@ -430,6 +439,8 @@ static void send_my_view(site_def const *site) {
   IFDBG(D_DETECT, FN;);
   a->body.c_t = view_msg;
   a->body.app_u_u.present = detector_node_set(site);
+
+  G_INFO("send_my_view is called xcom_send");
   xcom_send(a, msg);
 }
 

@@ -75,10 +75,41 @@ static pax_msg *init_pax_msg(pax_msg *p, int refcnt, synode_no synode,
   return p;
 }
 
+/* Initialize a message */
+static pax_msg *init_faked_pax_msg(pax_msg *p, int refcnt, synode_no synode,
+                                   node_no nodeno) {
+  p->refcnt = refcnt;
+  p->group_id = 0;
+  p->max_synode = null_synode;
+  p->from = nodeno;
+  p->to = VOID_NODE_NO;
+  p->op = initial_op;
+  init_ballot(&p->reply_to, 0, nodeno);
+  /*
+   -1 ensures ballot (-1,nodeno) is less than any ballot used by any proposer.
+   Leader will use reserved ballot (0,_) for its initial 2-phase Paxos round.
+   Remaining rounds will use ballot (1+,_) and the vanilla 3-phase Paxos.
+   */
+  init_ballot(&p->proposal, -1, nodeno);
+  p->synode = synode;
+  p->msg_type = normal;
+  p->receivers = NULL;
+  p->a = NULL;
+  p->force_delivery = 0;
+  p->event_horizon = EVENT_HORIZON_MIN;
+  return p;
+}
+
 pax_msg *pax_msg_new(synode_no synode, site_def const *site) {
   pax_msg *p = (pax_msg *)calloc((size_t)1, sizeof(pax_msg));
   IFDBG(D_NONE, FN; PTREXP(p));
   return init_pax_msg(p, 0, synode, site);
+}
+
+pax_msg *pax_faked_msg_new(synode_no synode, node_no nodeno) {
+  pax_msg *p = (pax_msg *)calloc((size_t)1, sizeof(pax_msg));
+  IFDBG(D_NONE, FN; PTREXP(p));
+  return init_faked_pax_msg(p, 0, synode, nodeno);
 }
 
 pax_msg *pax_msg_new_0(synode_no synode) {
