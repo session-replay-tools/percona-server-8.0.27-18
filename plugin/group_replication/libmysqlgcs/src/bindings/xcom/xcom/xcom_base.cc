@@ -385,6 +385,7 @@ int xcom_shutdown = 0;  /* Xcom_Shutdown flag */
 synode_no executed_msg; /* The message we are waiting to execute */
 synode_no max_skip_msg; /* Max message number skipped so far */
 synode_no max_synode;   /* Max message number seen so far */
+uint64_t current_propose_msgno = 0;
 task_env *boot = NULL;
 task_env *detector = NULL;
 task_env *killer = NULL;
@@ -1508,6 +1509,7 @@ static int prepare_msg(pax_msg *p) {
   init_prepare_msg(p);
   /* p->msg_type = normal; */
   participate_paxos[p->synode.msgno % MAX_ARRAY_LEN] = 1;
+  current_propose_msgno = p->synode.msgno;
   return send_to_acceptors(p, "prepare_msg");
 }
 
@@ -1571,6 +1573,7 @@ void init_propose_msg(pax_msg *p) {
 
 static int send_propose_msg(pax_msg *p) {
   participate_paxos[p->synode.msgno % MAX_ARRAY_LEN] = 1;
+  current_propose_msgno = p->synode.msgno;
   return send_to_acceptors(p, "propose_msg");
 }
 
@@ -4274,16 +4277,18 @@ static void handle_accept(site_def const *site, pax_machine *p,
           msg_no.node = site->nodeno;
           if (synode_msgno_not_gt(executed_msg, msg_no)) {
             if (synode_msgno_gt(msg_no, max_skip_msg)) {
-              skip_flag = true;
-              pax_machine *pm = get_cache(msg_no);
-              if (pm) {
-                pax_msg *msg = pax_msg_new(msg_no, site);
-                prepare(msg, skip_op);
-                msg->msg_type = no_op;
-                send_skip_msg_to_others(site, msg, m->synode.node);
-                handle_skip(site, pm, msg);
-                participate_paxos[m->synode.msgno % MAX_ARRAY_LEN] = 1;
-                max_skip_msg = msg_no;
+              if (msg_no.msgno > current_propose_msgno) {
+                skip_flag = true;
+                pax_machine *pm = get_cache(msg_no);
+                if (pm) {
+                  pax_msg *msg = pax_msg_new(msg_no, site);
+                  prepare(msg, skip_op);
+                  msg->msg_type = no_op;
+                  send_skip_msg_to_others(site, msg, m->synode.node);
+                  handle_skip(site, pm, msg);
+                  participate_paxos[m->synode.msgno % MAX_ARRAY_LEN] = 1;
+                  max_skip_msg = msg_no;
+                }
               }
             }
           }
