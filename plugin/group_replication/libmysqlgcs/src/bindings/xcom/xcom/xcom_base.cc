@@ -5337,6 +5337,7 @@ pax_msg *dispatch_op(site_def const *site, pax_msg *p, linkage *reply_queue) {
         prepare(msg, skip_op);
         msg->msg_type = no_op;
         handle_skip(site, pm_next, msg);
+        unref_msg(&msg);
       }
       break;
     case recover_learn_op:
