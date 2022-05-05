@@ -4278,9 +4278,9 @@ static void handle_accept(site_def const *site, pax_machine *p,
           if (synode_msgno_not_gt(executed_msg, msg_no)) {
             if (synode_msgno_gt(msg_no, max_skip_msg)) {
               if (msg_no.msgno > current_propose_msgno) {
-                skip_flag = true;
                 pax_machine *pm = get_cache(msg_no);
                 if (pm) {
+                  skip_flag = true;
                   pax_msg *msg = pax_msg_new(msg_no, site);
                   prepare(msg, skip_op);
                   msg->msg_type = no_op;
