@@ -606,8 +606,6 @@ static synode_no incr_msgno(synode_no msgno) {
   return ret;
 }
 
-static const int MAX_ARRAY_LEN = 1024;
-static int participate_paxos[MAX_ARRAY_LEN];
 int all_nodes_valid = 0;
 
 synode_no incr_synode(synode_no synode) {
@@ -1508,8 +1506,10 @@ void init_prepare_msg(pax_msg *p) { prepare(p, prepare_op); }
 static int prepare_msg(pax_msg *p) {
   init_prepare_msg(p);
   /* p->msg_type = normal; */
-  participate_paxos[p->synode.msgno % MAX_ARRAY_LEN] = 1;
-  current_propose_msgno = p->synode.msgno;
+  if (p->synode.msgno > current_propose_msgno) {
+    current_propose_msgno = p->synode.msgno;
+  }
+
   return send_to_acceptors(p, "prepare_msg");
 }
 
@@ -1572,8 +1572,10 @@ void init_propose_msg(pax_msg *p) {
 }
 
 static int send_propose_msg(pax_msg *p) {
-  participate_paxos[p->synode.msgno % MAX_ARRAY_LEN] = 1;
-  current_propose_msgno = p->synode.msgno;
+  if (p->synode.msgno > current_propose_msgno) {
+    current_propose_msgno = p->synode.msgno;
+  }
+
   return send_to_acceptors(p, "propose_msg");
 }
 
@@ -4271,24 +4273,21 @@ static void handle_accept(site_def const *site, pax_machine *p,
     bool skip_flag = false;
     if (site->nodeno != m->synode.node && m->synode.node == m->from &&
         all_nodes_valid) {
-      if (participate_paxos[m->synode.msgno % MAX_ARRAY_LEN] == 0) {
-        if (link_empty(&(prop_input_queue.data))) {
-          synode_no msg_no = m->synode;
-          msg_no.node = site->nodeno;
+      if (link_empty(&(prop_input_queue.data))) {
+        synode_no msg_no = m->synode;
+        msg_no.node = site->nodeno;
+        if (msg_no.msgno > current_propose_msgno) {
           if (synode_msgno_not_gt(executed_msg, msg_no)) {
             if (synode_msgno_gt(msg_no, max_skip_msg)) {
-              if (msg_no.msgno > current_propose_msgno) {
-                pax_machine *pm = get_cache(msg_no);
-                if (pm) {
-                  skip_flag = true;
-                  pax_msg *msg = pax_msg_new(msg_no, site);
-                  prepare(msg, skip_op);
-                  msg->msg_type = no_op;
-                  send_skip_msg_to_others(site, msg, m->synode.node);
-                  handle_skip(site, pm, msg);
-                  participate_paxos[m->synode.msgno % MAX_ARRAY_LEN] = 1;
-                  max_skip_msg = msg_no;
-                }
+              pax_machine *pm = get_cache(msg_no);
+              if (pm) {
+                skip_flag = true;
+                pax_msg *msg = pax_msg_new(msg_no, site);
+                prepare(msg, skip_op);
+                msg->msg_type = no_op;
+                send_skip_msg_to_others(site, msg, m->synode.node);
+                handle_skip(site, pm, msg);
+                max_skip_msg = msg_no;
               }
             }
           }
@@ -4296,9 +4295,6 @@ static void handle_accept(site_def const *site, pax_machine *p,
       }
     }
 
-    if (m->synode.msgno > 0) {
-      participate_paxos[(m->synode.msgno - 1) % MAX_ARRAY_LEN] = 0;
-    }
     pax_msg *reply = handle_simple_accept(p, m, m->synode, skip_flag);
     if (reply != NULL) SEND_REPLY;
   }

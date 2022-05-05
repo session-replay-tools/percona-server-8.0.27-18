@@ -440,7 +440,7 @@ static void send_my_view(site_def const *site) {
   a->body.c_t = view_msg;
   a->body.app_u_u.present = detector_node_set(site);
 
-  G_INFO("send_my_view is called xcom_send");
+  G_INFO("send_my_view calls xcom_send");
   xcom_send(a, msg);
 }
 
