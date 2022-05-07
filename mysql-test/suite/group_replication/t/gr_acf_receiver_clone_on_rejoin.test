@@ -118,6 +118,7 @@ INSERT INTO t1 VALUES (1);
 INSERT INTO t1 VALUES (2);
 
 
+--sleep 3
 --let $assert_text= 'CHANNEL ch1 is running'
 --let $assert_cond= [SELECT COUNT(*) AS count FROM performance_schema.replication_connection_status WHERE CHANNEL_NAME="ch1" AND SERVICE_STATE="ON", count, 1] = 1
 --source include/assert.inc
