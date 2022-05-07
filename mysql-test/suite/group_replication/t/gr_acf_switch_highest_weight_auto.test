@@ -219,6 +219,7 @@ while ($_rpl_server > 2)
 --source include/start_slave.inc
 --let $rpl_channel_name=
 
+--sleep 3
 --let $assert_text= Verify channel ch1_5 IO_THREAD is ON
 --let $assert_cond= "[SELECT SERVICE_STATE FROM performance_schema.replication_connection_status WHERE channel_name = \'ch1_5\', SERVICE_STATE, 1]" = "ON"
 --source include/assert.inc
