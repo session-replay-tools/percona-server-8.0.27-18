@@ -217,6 +217,8 @@ reap;
 --let $rpl_connection_name= server3
 --source include/rpl_connection.inc
 
+--sleep 3
+
 # Setting recovery user to avoid sporadic failures due to empty user.
 --disable_warnings
 RESET SLAVE FOR CHANNEL 'group_replication_recovery';

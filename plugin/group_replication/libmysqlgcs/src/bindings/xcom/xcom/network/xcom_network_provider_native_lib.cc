@@ -483,7 +483,7 @@ end:
 int Xcom_network_provider_library::timed_connect(int fd,
                                                  struct sockaddr *sock_addr,
                                                  socklen_t sock_size) {
-  return timed_connect_msec(fd, sock_addr, sock_size, 3000);
+  return timed_connect_msec(fd, sock_addr, sock_size, 5000);
 }
 
 /* purecov: begin deadcode */
