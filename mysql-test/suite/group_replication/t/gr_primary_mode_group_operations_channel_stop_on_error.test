@@ -93,6 +93,7 @@ SET SESSION sql_log_bin= 1;
 --echo
 --echo # 6. Confirm server1 Slave IO and SQL thread are not running.
 
+--sleep 2
 --let $slave_param= Slave_IO_Running
 --let $slave_param_value= No
 --source include/check_slave_param.inc

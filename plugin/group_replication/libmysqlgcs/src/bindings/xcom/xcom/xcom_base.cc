@@ -355,7 +355,7 @@ static int64_t socket_write(
     connection_descriptor *wfd, void *_buf, uint32_t n,
     connnection_write_method write_function = con_write);
 
-static double wakeup_delay_for_perf(double old);
+static double wakeup_delay_for_perf(double old, double max_wait_time);
 static double wakeup_delay(const site_def *site, double old);
 static void note_snapshot(node_no node);
 
@@ -2521,7 +2521,13 @@ int get_xcom_message(pax_machine **p, synode_no msgno, int n) {
         break;
       }
     }
-    TIMED_TASK_WAIT(&(*p)->rv, ep->delay = wakeup_delay_for_perf(ep->delay));
+    if (!((*p)->force_delivery)) {
+      TIMED_TASK_WAIT(&(*p)->rv,
+                      ep->delay = wakeup_delay_for_perf(ep->delay, 0.003));
+    } else {
+      TIMED_TASK_WAIT(&(*p)->rv,
+                      ep->delay = wakeup_delay_for_perf(ep->delay, 0.1));
+    }
     *p = get_cache(msgno);
     dump_debug_exec_state();
   }
@@ -2563,7 +2569,11 @@ int get_xcom_message(pax_machine **p, synode_no msgno, int n) {
     }
     IFDBG(D_NONE, FN; STRLIT("after find_value"); SYCEXP(msgno); PTREXP(*p);
           NDBG(ep->wait, u); SYCEXP(msgno));
-    ep->delay = wakeup_delay_for_perf(ep->delay);
+    if (!((*p)->force_delivery)) {
+      ep->delay = wakeup_delay_for_perf(ep->delay, 0.003);
+    } else {
+      ep->delay = wakeup_delay_for_perf(ep->delay, 0.1);
+    }
     IFDBG(D_NONE, FN; NDBG(ep->delay, f));
     TIMED_TASK_WAIT(&(*p)->rv, ep->delay);
     *p = get_cache(msgno);
@@ -3790,7 +3800,7 @@ static double wakeup_delay(const site_def *site, double old) {
   return retval;
 }
 
-static double wakeup_delay_for_perf(double old) {
+static double wakeup_delay_for_perf(double old, double max_wait_time) {
   double retval = 0.0;
   if (0.0 == old) {
     double m = median_time() / 100;
@@ -3801,9 +3811,7 @@ static double wakeup_delay_for_perf(double old) {
   }
 
   {
-    /* Set max value to be 3 millisecond */
-    double const maximum_threshold = 0.003;
-    while (retval > maximum_threshold) retval /= 1.31415926;
+    while (retval > max_wait_time) retval /= 1.31415926;
   }
   /* IFDBG(D_NONE, FN; NDBG(retval,d)); */
   return retval;

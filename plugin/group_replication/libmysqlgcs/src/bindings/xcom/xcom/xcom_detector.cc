@@ -381,12 +381,6 @@ int detector_task(task_arg arg [[maybe_unused]]) {
           ep->notify = 0;
           G_INFO("call send_my_view in detector");
           send_my_view(x_site);
-        } else {
-          if (ep->notify) {
-            if (iamtheleader(x_site)) {
-              G_INFO("not enough live nodes for sending my view");
-            }
-          }
         }
       }
 

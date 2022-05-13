@@ -65,6 +65,7 @@
 --let $rpl_channel_name='ch1'
 --source include/start_slave.inc
 
+--sleep 2
 --let $assert_text= 'There is 1 row in performance_schema.replication_asynchronous_connection_failover'
 --let $assert_cond= [SELECT COUNT(*) count FROM performance_schema.replication_asynchronous_connection_failover, count, 1] = 1
 --source include/assert.inc
@@ -107,6 +108,7 @@
 SELECT asynchronous_connection_failover_add_source('ch1', '10.0.0.1', 3306, '', 50);
 SELECT asynchronous_connection_failover_add_source('ch1', '10.0.0.2', 3306, '', 50);
 
+--sleep 2
 --let $assert_text= 'There are 2 rows in performance_schema.replication_asynchronous_connection_failover'
 --let $assert_cond= [SELECT COUNT(*) count FROM performance_schema.replication_asynchronous_connection_failover, count, 1] = 2
 --source include/assert.inc
@@ -142,6 +144,7 @@ SELECT * FROM performance_schema.replication_group_configuration_version WHERE n
 --let $rpl_connection_name= server1
 --source include/rpl_connection.inc
 
+--sleep 2
 --let $assert_text= 'There is 1 row in performance_schema.replication_asynchronous_connection_failover'
 --let $assert_cond= [SELECT COUNT(*) count FROM performance_schema.replication_asynchronous_connection_failover, count, 1] = 1
 --source include/assert.inc
@@ -176,6 +179,7 @@ SELECT * FROM performance_schema.replication_group_configuration_version WHERE n
 --let $rpl_connection_name= server2
 --source include/rpl_connection.inc
 
+--sleep 2
 --let $assert_text= 'There is 1 row in performance_schema.replication_asynchronous_connection_failover'
 --let $assert_cond= [SELECT COUNT(*) count FROM performance_schema.replication_asynchronous_connection_failover, count, 1] = 1
 --source include/assert.inc
@@ -221,6 +225,7 @@ SELECT * FROM performance_schema.replication_group_configuration_version WHERE n
 --let $rpl_channel_name= 'ch1'
 --source include/wait_for_slave_to_start.inc
 
+--sleep 2
 --let $assert_text= 'There is 1 row in performance_schema.replication_asynchronous_connection_failover'
 --let $assert_cond= [SELECT COUNT(*) count FROM performance_schema.replication_asynchronous_connection_failover, count, 1] = 1
 --source include/assert.inc

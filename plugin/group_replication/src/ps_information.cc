@@ -151,6 +151,8 @@ bool get_group_member_stats(
    and one would not be able to extract information
    */
   if (group_member_manager == nullptr) {
+    LogPluginErrMsg(INFORMATION_LEVEL, ER_LOG_PRINTF_MSG,
+                    "get_group_members_info, leave at pos 1");
     return false;
   }
 
@@ -171,6 +173,8 @@ bool get_group_member_stats(
 
   if (member_info == nullptr)  // The requested member is not managed...
   {
+    LogPluginErrMsg(INFORMATION_LEVEL, ER_LOG_PRINTF_MSG,
+                    "get_group_members_info, leave at pos 2");
     return true; /* purecov: inspected */
   }
 
@@ -181,6 +185,8 @@ bool get_group_member_stats(
       local_member_info->get_recovery_status() ==
           Group_member_info::MEMBER_OFFLINE) {
     delete member_info;
+    LogPluginErrMsg(INFORMATION_LEVEL, ER_LOG_PRINTF_MSG,
+                    "get_group_members_info, leave at pos 3");
     return false;
   }
 
@@ -204,12 +210,21 @@ bool get_group_member_stats(
   MUTEX_LOCK(lock, get_plugin_applier_module_lock());
   Pipeline_member_stats *pipeline_stats = nullptr;
   bool ret = (!get_plugin_is_stopping() && applier_module != nullptr);
+  if (!ret) {
+    LogPluginErrMsg(INFORMATION_LEVEL, ER_LOG_PRINTF_MSG,
+                    "get_group_members_info, ret is false at pos 1");
+  }
+
   DBUG_SIGNAL_WAIT_FOR(
       current_thd, "group_replication_status_when_terminal_applier",
       "reach_get_member_status_sync", "end_get_member_status_sync");
   ret = ret && plugin_is_group_replication_running();
   DBUG_SIGNAL_WAIT_FOR(current_thd, "group_replication_stats_when_rejoin",
                        "reach_rejoin_stats_sync", "end_rejoin_stats_sync");
+  if (!ret) {
+    LogPluginErrMsg(INFORMATION_LEVEL, ER_LOG_PRINTF_MSG,
+                    "get_group_members_info, ret is false at pos 2");
+  }
   ret =
       ret &&
       (pipeline_stats =
@@ -259,6 +274,9 @@ bool get_group_member_stats(
 
     /* clean-up */
     delete pipeline_stats;
+  } else {
+    LogPluginErrMsg(INFORMATION_LEVEL, ER_LOG_PRINTF_MSG,
+                    "get_group_member_stats, pipeline_stats is not set");
   }
 
   delete member_info;

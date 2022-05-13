@@ -131,6 +131,7 @@ SET DEBUG_SYNC= 'now SIGNAL signal.group_replication_wait_on_observer_trans_cont
 --let $wait_condition=SELECT COUNT(*)=0 FROM performance_schema.events_stages_current WHERE event_name LIKE "%stage/group_rpl%" AND event_name NOT LIKE "%stage/group_rpl/Group Replication%"
 --source include/wait_condition.inc
 
+--sleep 2
 --source include/gr_assert_primary_member.inc
 
 --let $rpl_connection_name= server3
@@ -139,6 +140,7 @@ SET DEBUG_SYNC= 'now SIGNAL signal.group_replication_wait_on_observer_trans_cont
 --let $wait_condition=SELECT COUNT(*)=0 FROM performance_schema.events_stages_current WHERE event_name LIKE "%stage/group_rpl%" AND event_name NOT LIKE "%stage/group_rpl/Group Replication%"
 --source include/wait_condition.inc
 
+--sleep 2
 --source include/gr_assert_secondary_member.inc
 
 --echo
