@@ -202,12 +202,20 @@ void Certifier_broadcast_thread::dispatcher() {
   THD *thd = new THD;
   int broadcast_gtid_executed_period = 10;
   int multiplied_sleep_times = 0;
+  int denominator = 10;
+  int single_primary_fast_mode =
+      local_member_info->in_single_primary_fast_mode();
   my_thread_init();
   thd->set_new_thread_id();
   thd->thread_stack = (char *)&thd;
   thd->store_globals();
   global_thd_manager_add_thd(thd);
   broadcast_thd = thd;
+
+  if (single_primary_fast_mode) {
+    denominator = 100;
+    broadcast_gtid_executed_period = 100;
+  }
 
   mysql_mutex_lock(&broadcast_run_lock);
   broadcast_thd_state.set_running();
@@ -218,10 +226,15 @@ void Certifier_broadcast_thread::dispatcher() {
       (Certifier *)applier_module->get_certification_handler()->get_certifier();
 
   while (!aborted) {
-    broadcast_gtid_executed_period =
-        get_broadcast_gtid_executed_period_var() / 100;
+    if (single_primary_fast_mode) {
+      broadcast_gtid_executed_period =
+          get_broadcast_gtid_executed_period_var() / 10;
+    } else {
+      broadcast_gtid_executed_period =
+          get_broadcast_gtid_executed_period_var() / 100;
+    }
 
-    if (gc_counter % 10 == 0) {
+    if (gc_counter % denominator == 0) {
       /* Do the following for each second */
       applier_module->get_pipeline_stats_member_collector()
           ->set_send_transaction_identifiers();
@@ -264,7 +277,7 @@ void Certifier_broadcast_thread::dispatcher() {
     }
 
     if (!is_arbitrator_role()) {
-      if (gc_counter % 10 == 0) {
+      if (gc_counter % denominator == 0) {
         applier_module->run_flow_control_step(true);
       } else {
         applier_module->run_flow_control_step(false);

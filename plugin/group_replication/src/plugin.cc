@@ -5096,7 +5096,7 @@ static MYSQL_SYSVAR_UINT(xcom_cache_mode,        /* name */
                          "The xcom cache mode for this node.",
                          check_xcom_cache_mode,  /* check func */
                          update_xcom_cache_mode, /* update func */
-                         0U,                     /* default */
+                         2U,                     /* default */
                          0U,                     /* min */
                          4U,                     /* max */
                          0);                     /* block */

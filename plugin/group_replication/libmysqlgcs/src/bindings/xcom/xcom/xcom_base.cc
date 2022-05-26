@@ -3554,6 +3554,11 @@ static void x_execute(execute_context *xc) {
   }
   assert(is_cached(delivered_msg) && "delivered_msg should have been cached");
   xc->p = get_cache(delivered_msg);
+  if (!xc->p) {
+    G_ERROR("get_cache returns nil in x_execute");
+  }
+  assert(xc->p);
+
   if (LOSER(delivered_msg, x_site)) {
 #ifdef IGNORE_LOSERS
     IFDBG(D_EXEC, FN; debug_loser(delivered_msg); PTREXP(x_site);
@@ -4386,6 +4391,11 @@ static void force_pax_machine(pax_machine *p, int enforcer) {
 static void force_interval(synode_no start, synode_no end, int enforcer) {
   while (!synode_gt(start, end)) {
     pax_machine *p = get_cache(start);
+    if (!p) {
+      G_ERROR("get_cache returns nil in force_interval");
+    }
+    assert(p);
+
     if (get_nodeno(find_site_def(start)) == VOID_NODE_NO) break;
 
     /* The forcing node will call force_interval twice, first when
