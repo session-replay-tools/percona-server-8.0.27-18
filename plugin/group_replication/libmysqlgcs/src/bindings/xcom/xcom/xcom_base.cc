@@ -2401,7 +2401,9 @@ void execute_msg(site_def *site, pax_machine *pma, pax_msg *p) {
 }
 
 static int read_missing_values(int n);
+static int read_missing_values_fast();
 static int propose_missing_values(int n);
+static int propose_missing_values_fast();
 
 #ifdef EXECUTOR_TASK_AGGRESSIVE_NO_OP
 /* With many nodes sending read_ops on instances that are not decided yet, it
@@ -2475,74 +2477,12 @@ static int find_value(site_def const *site, unsigned int *wait, int n) {
 
 static void dump_debug_exec_state();
 
-#ifdef PROPOSE_IF_LEADER
-int get_xcom_message(pax_machine **p, synode_no msgno, int n) {
-  DECL_ENV
-  unsigned int wait;
-  double delay;
-  int silent;
-  site_def const *site;
-  END_ENV;
-
-  TASK_BEGIN
-
-  ep->wait = 0;
-  ep->delay = 0.0;
-  *p = force_get_cache(msgno);
-  ep->site = NULL;
-  ep->silent = DEFAULT_DETECTOR_LIVE_TIMEOUT;
-
-  dump_debug_exec_state();
-  while (!finished(*p)) {
-    ep->site = find_site_def(msgno);
-    /* The end of the world ?, fake message by skipping */
-    if (get_maxnodes(ep->site) == 0) {
-      pax_msg *msg = pax_msg_new(msgno, ep->site);
-      handle_skip(ep->site, *p, msg);
-      break;
-    }
-    IFDBG(D_NONE, FN; STRLIT(" not finished "); SYCEXP(msgno); PTREXP(*p);
-          NDBG(ep->wait, u); SYCEXP(msgno));
-    if (the_app_xcom_cfg) {
-      ep->silent = the_app_xcom_cfg->m_flp_timeout;
-    }
-    if (get_maxnodes(ep->site) > 1 && iamthegreatest(ep->site) &&
-        ep->site->global_node_set.node_set_val &&
-        !ep->site->global_node_set.node_set_val[msgno.node] &&
-        may_be_dead(ep->site->detected, msgno.node, task_now(), silent,
-                    ep->site->servers[msgno.node]->unreachable)) {
-      if (propose_missing_values(n) == -1) {
-        *p = nullptr;
-        break;
-      }
-    } else {
-      if (find_value(ep->site, &ep->wait, n) == -1) {
-        *p = nullptr;
-        break;
-      }
-    }
-    if (!((*p)->force_delivery)) {
-      TIMED_TASK_WAIT(&(*p)->rv,
-                      ep->delay = wakeup_delay_for_perf(ep->delay, 0.003));
-    } else {
-      TIMED_TASK_WAIT(&(*p)->rv,
-                      ep->delay = wakeup_delay_for_perf(ep->delay, 0.1));
-    }
-    *p = get_cache(msgno);
-    dump_debug_exec_state();
-  }
-
-  FINALLY
-  IFDBG(D_NONE, FN; SYCEXP(msgno); PTREXP(*p); NDBG(ep->wait, u);
-        SYCEXP(msgno));
-  TASK_END;
-}
-#else
 int get_xcom_message(pax_machine **p, synode_no msgno, int n) {
   DECL_ENV
   unsigned int wait;
   double delay;
   site_def const *site;
+  server const *cur_server;
   END_ENV;
 
   TASK_BEGIN
@@ -2563,9 +2503,24 @@ int get_xcom_message(pax_machine **p, synode_no msgno, int n) {
     }
     IFDBG(D_NONE, FN; STRLIT("before find_value"); SYCEXP(msgno); PTREXP(*p);
           NDBG(ep->wait, u); SYCEXP(msgno));
-    if (find_value(ep->site, &ep->wait, n) == -1) {
-      *p = nullptr;
-      break;
+    ep->cur_server = ep->site->servers[msgno.node];
+    if (ep->cur_server && ep->cur_server->fast_skip_allowed) {
+      if (iamthegreatest(ep->site)) {
+        if (propose_missing_values_fast() == -1) {
+          *p = nullptr;
+          break;
+        }
+      } else {
+        if (read_missing_values_fast() == -1) {
+          *p = nullptr;
+          break;
+        }
+      }
+    } else {
+      if (find_value(ep->site, &ep->wait, n) == -1) {
+        *p = nullptr;
+        break;
+      }
     }
     IFDBG(D_NONE, FN; STRLIT("after find_value"); SYCEXP(msgno); PTREXP(*p);
           NDBG(ep->wait, u); SYCEXP(msgno));
@@ -2583,7 +2538,6 @@ int get_xcom_message(pax_machine **p, synode_no msgno, int n) {
   FINALLY
   TASK_END;
 }
-#endif
 
 synode_no set_executed_msg(synode_no msgno) {
   IFDBG(D_EXEC, FN; STRLIT("changing executed_msg from "); SYCEXP(executed_msg);
@@ -3930,6 +3884,21 @@ static int read_missing_values(int n) {
   return 0;
 }
 
+static int read_missing_values_fast() {
+  synode_no find = executed_msg;
+
+  pax_machine *p = force_get_cache(find);
+  if (!p) {
+    no_cache_abort = 1;
+    return -1;
+  }
+  if (!recently_active(p) && !finished(p) && !is_busy_machine(p)) {
+    send_read(find);
+  }
+
+  return 0;
+}
+
 static int propose_missing_values(int n) {
   synode_no find = executed_msg;
   synode_no end = max_synode;
@@ -3960,6 +3929,24 @@ static int propose_missing_values(int n) {
     }
     find = incr_synode(find);
     i++;
+  }
+
+  return 0;
+}
+
+static int propose_missing_values_fast() {
+  synode_no find = executed_msg;
+  pax_machine *p = force_get_cache(find);
+  if (!p) {
+    no_cache_abort = 1;
+    return -1;
+  }
+  if (wait_forced_config) {
+    force_pax_machine(p, 1);
+  }
+  if (get_nodeno(find_site_def(find)) == VOID_NODE_NO) return 0;
+  if (ok_to_propose(p)) {
+    propose_noop(find, p);
   }
 
   return 0;
@@ -5885,6 +5872,8 @@ int reply_handler_task(task_arg arg) {
       if (n <= 0) {
         shutdown_connection(ep->s->con);
         ep->s->unreachable = DIRECT_ABORT_CONN;
+        ep->s->fast_skip_allowed = 1;
+        G_INFO("fast_skip_allowed is set here");
         continue;
       }
       receive_bytes[ep->reply->op] += (uint64_t)n + MSG_HDR_SIZE;

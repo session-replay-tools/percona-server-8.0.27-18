@@ -52,6 +52,7 @@ struct server {
   srv_buf out_buf;
   int invalid;
   int unreachable;
+  int fast_skip_allowed;
   int number_of_pings_received; /* Number of pings received from this server */
   unsigned int zone_id : 4;
   bool zone_id_sync_mode;
