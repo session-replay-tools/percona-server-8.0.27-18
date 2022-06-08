@@ -614,7 +614,8 @@ static server *mksrv(char *srv, xcom_port port) {
   s->detected = 0.0;
   s->large_transfer_detected = task_now();
   s->unreachable = 0;
-  s->fast_skip_allowed = 0;
+  s->fast_skip_allowed_for_kill = 0;
+  s->fast_skip_allowed_for_add = 0;
   s->last_ping_received = 0.0;
   s->number_of_pings_received = 0;
 #if defined(_WIN32)
@@ -1559,7 +1560,7 @@ int sender_task(task_arg arg) {
 #endif
       if (is_connected(ep->s->con)) {
         ep->s->unreachable = 0;
-        ep->s->fast_skip_allowed = 0;
+        ep->s->fast_skip_allowed_for_kill = 0;
         break;
       }
 

@@ -52,9 +52,10 @@ struct server {
   srv_buf out_buf;
   int invalid;
   int unreachable;
-  int fast_skip_allowed;
   int number_of_pings_received; /* Number of pings received from this server */
   unsigned int zone_id : 4;
+  unsigned int fast_skip_allowed_for_kill : 1;
+  unsigned int fast_skip_allowed_for_add : 1;
   bool zone_id_sync_mode;
 #if defined(_WIN32)
   bool reconnect; /*States if the server should be reconnected*/

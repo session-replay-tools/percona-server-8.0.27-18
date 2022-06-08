@@ -1772,7 +1772,8 @@ static void dump_xcom_node_names(site_def const *site) {
 }
 /* purecov: end */
 
-void site_install_action(site_def *site, cargo_type operation) {
+void site_install_action(site_def *site, cargo_type operation,
+                         bool fast_add_allowed) {
   IFDBG(D_NONE, FN; NDBG(get_nodeno(get_site_def()), u));
   assert(site->event_horizon);
   if (group_mismatch(site->start, max_synode) ||
@@ -1784,10 +1785,28 @@ void site_install_action(site_def *site, cargo_type operation) {
   IFDBG(D_BUG, FN; SYCEXP(site->start); SYCEXP(site->boot_key));
   IFDBG(D_BUG, FN; COPY_AND_FREE_GOUT(dbg_site_def(site)));
   set_group(get_group_id(site));
-  if (get_maxnodes(get_site_def())) {
-    G_INFO("update_servers is called, max nodes:%u",
-           get_maxnodes(get_site_def()));
+  int max_nodes = get_maxnodes(get_site_def());
+  if (max_nodes) {
     update_servers(site, operation);
+    G_INFO("update_servers is called, max nodes:%u, site nodeno:%d", max_nodes,
+           site->nodeno);
+    node_no added_no = max_nodes - 1;
+    if (fast_add_allowed) {
+      if (max_nodes >= 3 && site->nodeno < NSERVERS &&
+          site->nodeno != added_no && site->servers[added_no]) {
+        site->servers[added_no]->fast_skip_allowed_for_add = 1;
+        G_INFO("set fast_skip_allowed_for_add true for node:%d", added_no);
+      } else {
+        site->servers[added_no]->fast_skip_allowed_for_add = 0;
+        G_INFO("set fast_skip_allowed_for_add false for node:%d", added_no);
+      }
+    } else {
+      site->servers[added_no]->fast_skip_allowed_for_add = 0;
+      G_INFO(
+          "fast_add_allowed false and set fast_skip_allowed_for_add false "
+          "for node:%d",
+          added_no);
+    }
   }
   site->install_time = task_now();
   G_INFO("pid %d Installed site start=" SY_FMT " boot_key=" SY_FMT
@@ -1822,7 +1841,7 @@ static site_def *install_ng_with_start(app_data_ptr a, synode_no start) {
   if (a) {
     site_def *site = create_site_def_with_start(a, start);
     G_INFO("install_ng_with_start calls site_install_action");
-    site_install_action(site, a->body.c_t);
+    site_install_action(site, a->body.c_t, false);
     return site;
   }
   return 0;
@@ -2480,7 +2499,10 @@ static void dump_debug_exec_state();
 int get_xcom_message(pax_machine **p, synode_no msgno, int n) {
   DECL_ENV
   unsigned int wait;
+  int fast_process;
+  int fast_process_cnt;
   double delay;
+  double max_delay;
   site_def const *site;
   server const *cur_server;
   END_ENV;
@@ -2488,23 +2510,37 @@ int get_xcom_message(pax_machine **p, synode_no msgno, int n) {
   TASK_BEGIN
 
   ep->wait = 0;
+  ep->fast_process = 0;
+  ep->fast_process_cnt = 0;
   ep->delay = 0.0;
+  ep->max_delay = 0.003;
   *p = force_get_cache(msgno);
-  ep->site = NULL;
+
+  if ((*p) && (*p)->force_delivery) {
+    ep->max_delay = 0.1;
+  }
+
+  ep->site = find_site_def(msgno);
+  ep->cur_server = ep->site->servers[msgno.node];
+  if (ep->cur_server) {
+    if (ep->cur_server->fast_skip_allowed_for_add) {
+      ep->fast_process = 1;
+      ep->max_delay = 0.1;
+    } else if (ep->cur_server->fast_skip_allowed_for_kill) {
+      ep->fast_process = 1;
+    }
+  }
 
   dump_debug_exec_state();
   while (!finished(*p)) {
-    ep->site = find_site_def(msgno);
     /* The end of the world ?, fake message by skipping */
     if (get_maxnodes(ep->site) == 0) {
       pax_msg *msg = pax_msg_new(msgno, ep->site);
       handle_skip(ep->site, *p, msg);
       break;
     }
-    IFDBG(D_NONE, FN; STRLIT("before find_value"); SYCEXP(msgno); PTREXP(*p);
-          NDBG(ep->wait, u); SYCEXP(msgno));
-    ep->cur_server = ep->site->servers[msgno.node];
-    if (ep->cur_server && ep->cur_server->fast_skip_allowed) {
+
+    if (ep->fast_process) {
       if (iamthegreatest(ep->site)) {
         if (propose_missing_values_fast() == -1) {
           *p = nullptr;
@@ -2516,19 +2552,20 @@ int get_xcom_message(pax_machine **p, synode_no msgno, int n) {
           break;
         }
       }
+      ep->fast_process_cnt++;
+      if (ep->fast_process_cnt >= 3) {
+        if (ep->cur_server->fast_skip_allowed_for_add) {
+          ep->fast_process = 0;
+        }
+      }
     } else {
       if (find_value(ep->site, &ep->wait, n) == -1) {
         *p = nullptr;
         break;
       }
     }
-    IFDBG(D_NONE, FN; STRLIT("after find_value"); SYCEXP(msgno); PTREXP(*p);
-          NDBG(ep->wait, u); SYCEXP(msgno));
-    if (!((*p)->force_delivery)) {
-      ep->delay = wakeup_delay_for_perf(ep->delay, 0.003);
-    } else {
-      ep->delay = wakeup_delay_for_perf(ep->delay, 0.1);
-    }
+
+    ep->delay = wakeup_delay_for_perf(ep->delay, ep->max_delay);
     IFDBG(D_NONE, FN; NDBG(ep->delay, f));
     TIMED_TASK_WAIT(&(*p)->rv, ep->delay);
     *p = get_cache(msgno);
@@ -2863,7 +2900,7 @@ site_def *handle_add_node(app_data_ptr a) {
     site->start = getstart(a);
     site->boot_key = a->app_key;
     G_INFO("handle_add_node calls site_install_action");
-    site_install_action(site, a->body.c_t);
+    site_install_action(site, a->body.c_t, true);
     return site;
   }
 }
@@ -3022,7 +3059,7 @@ bool_t handle_event_horizon(app_data_ptr a) {
     new_config->event_horizon = new_event_horizon;
     new_config->start = getstart(a);
     new_config->boot_key = a->app_key;
-    site_install_action(new_config, a->body.c_t);
+    site_install_action(new_config, a->body.c_t, false);
     G_INFO("The event horizon was reconfigured to %" PRIu32, new_event_horizon);
   }
   return TRUE;
@@ -3053,7 +3090,7 @@ site_def *handle_remove_node(app_data_ptr a) {
   site->start = getstart(a);
   site->boot_key = a->app_key;
   G_INFO("handle_remove_node calls site_install_action");
-  site_install_action(site, a->body.c_t);
+  site_install_action(site, a->body.c_t, false);
   return site;
 }
 
@@ -4267,6 +4304,12 @@ static void handle_accept(site_def const *site, pax_machine *p,
     bool skip_flag = false;
     if (site->nodeno != m->synode.node && m->synode.node == m->from &&
         all_nodes_valid) {
+      if (m->from >= 2 && m->from < NSERVERS && site->servers[m->from]) {
+        if (site->servers[m->from]->fast_skip_allowed_for_add) {
+          site->servers[m->from]->fast_skip_allowed_for_add = 0;
+          G_INFO("m->from:%d set fast_skip_allowed_for_add false", m->from);
+        }
+      }
       if (participate_paxos[m->synode.msgno % MAX_ARRAY_LEN] == 0) {
         if (link_empty(&(prop_input_queue.data))) {
           synode_no msg_no = m->synode;
@@ -5872,8 +5915,8 @@ int reply_handler_task(task_arg arg) {
       if (n <= 0) {
         shutdown_connection(ep->s->con);
         ep->s->unreachable = DIRECT_ABORT_CONN;
-        ep->s->fast_skip_allowed = 1;
-        G_INFO("fast_skip_allowed is set here");
+        ep->s->fast_skip_allowed_for_kill = 1;
+        G_INFO("fast_skip_allowed_for_kill is set here");
         continue;
       }
       receive_bytes[ep->reply->op] += (uint64_t)n + MSG_HDR_SIZE;

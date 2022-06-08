@@ -182,7 +182,8 @@ synode_no xcom_get_last_removed_from_cache();
 char const *xcom_fsm(xcom_actions action, task_arg fsmargs);
 void site_post_install_action(site_def *site);
 
-void site_install_action(site_def *site, cargo_type operation);
+void site_install_action(site_def *site, cargo_type operation,
+                         bool fast_add_allowed);
 void send_client_add_node(char *srv, xcom_port port, node_list *nl);
 void send_client_remove_node(char *srv, xcom_port port, node_list *nl);
 

@@ -441,7 +441,7 @@ void import_config(gcs_snapshot *gcs_snap) {
         site->event_horizon = cp->event_horizon;
         copy_node_set(&cp->global_node_set, &site->global_node_set);
         G_INFO("import_config calls site_install_action");
-        site_install_action(site, app_type);
+        site_install_action(site, app_type, false);
       }
     }
   }
