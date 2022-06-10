@@ -519,13 +519,18 @@ Gcs_message *Gcs_xcom_communication::convert_packet_to_message(
    Decode the incoming packet into the message.
    */
   message_data = new Gcs_message_data(packet_in.get_payload_length());
-  if (message_data->decode(packet_in.get_payload_pointer(),
-                           packet_in.get_payload_length())) {
-    /* purecov: begin inspected */
-    delete message_data;
-    MYSQL_GCS_LOG_WARN("Discarding message. Unable to decode it.");
+  if (message_data) {
+    if (message_data->decode(packet_in.get_payload_pointer(),
+                             packet_in.get_payload_length())) {
+      /* purecov: begin inspected */
+      delete message_data;
+      MYSQL_GCS_LOG_WARN("Discarding message. Unable to decode it.");
+      goto end;
+      /* purecov: end */
+    }
+  } else {
+    MYSQL_GCS_LOG_WARN("message_data is nil.");
     goto end;
-    /* purecov: end */
   }
   // Get packet origin.
   packet_synode = packet_in.get_delivery_synode();
