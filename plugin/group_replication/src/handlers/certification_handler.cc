@@ -684,8 +684,12 @@ int Certification_handler::inject_transactional_events(Pipeline_event *pevent,
       event->server_id, true, 0, 0, true, time_stamp_now, time_stamp_now,
       gtid_specification, server_version, server_version);
 
+
   Pipeline_event *gtid_pipeline_event =
       new Pipeline_event(gtid_log_event, fd_event);
+
+  gtid_pipeline_event->set_view_generated();
+
   next(gtid_pipeline_event, cont, false);
 
   int error = cont->wait();
