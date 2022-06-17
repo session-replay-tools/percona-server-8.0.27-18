@@ -488,6 +488,11 @@ void Sql_cmd_truncate_table::truncate_base(THD *thd, TABLE_LIST *table_ref) {
   dd::Schema_MDL_locker mdl_locker(thd);
   dd::cache::Dictionary_client::Auto_releaser releaser(thd->dd_client());
 
+  thd->ddl_database.clear();
+  thd->ddl_table.clear();
+  thd->ddl_database.append(table_ref->db);
+  thd->ddl_table.append(table_ref->table_name);
+
   // Actions needed to cleanup before leaving scope.
   auto cleanup_guard = create_scope_guard([&]() {
     end_transaction(thd, binlog_stmt, binlog_is_trans);

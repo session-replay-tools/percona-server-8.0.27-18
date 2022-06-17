@@ -90,6 +90,11 @@ typedef struct Cert_basic_info {
   uint64 recorded_timestamp;
 } Cert_basic_info;
 
+typedef struct Cert_ddl_basic_info {
+  Gtid_set *gtid_ref;
+  unsigned int is_ddl : 1;
+} Cert_ddl_basic_info;
+
 /**
   This class is a core component of the database state machine
   replication protocol. It implements conflict detection based
@@ -114,6 +119,8 @@ typedef struct Cert_basic_info {
 */
 typedef std::unordered_map<std::string, Cert_basic_info> Certification_info;
 typedef std::map<uint64, std::string> Certification_index;
+typedef std::unordered_map<std::string, Cert_ddl_basic_info>
+    Certification_ddl_info;
 
 class Certifier_broadcast_thread {
  public:
@@ -265,7 +272,8 @@ class Certifier : public Certifier_interface {
     @retval -1                error.
    */
   rpl_gno certify(Gtid_set *snapshot_version,
-                  std::list<const char *> *write_set, bool generate_group_id,
+                  std::list<const char *> *write_set,
+                  std::list<const char *> *read_set, bool generate_group_id,
                   const char *member_uuid, Gtid_log_event *gle,
                   bool local_transaction);
 
@@ -587,6 +595,9 @@ class Certifier : public Certifier_interface {
   */
   Certification_info certification_info;
   Certification_index certification_index;
+
+  Certification_ddl_info cert_ddl_info;
+
   Sid_map *certification_info_sid_map;
 
   ulonglong positive_cert;
@@ -735,6 +746,7 @@ class Certifier : public Certifier_interface {
   */
   bool add_item(const char *item, Gtid_set_ref *snapshot_version,
                 int64 *item_previous_sequence_number);
+  bool add_ddl_item(const char *item, Gtid_set *snapshot_version, bool dml);
 
   /**
     Find the snapshot_version corresponding to an item. Return if
@@ -745,6 +757,8 @@ class Certifier : public Certifier_interface {
                               Otherwise 0;
   */
   Gtid_set *get_certified_write_set_snapshot_version(const char *item);
+
+  Gtid_set *get_certified_ddl_set_snapshot_version(const char *item, bool dml);
 
   /**
     Computes intersection between all sets received, so that we

@@ -4771,6 +4771,8 @@ class THD : public MDL_context_owner,
 
  public:
   Transactional_ddl_context m_transactional_ddl{this};
+  std::string ddl_database;
+  std::string ddl_table;
 
   /**
     Flag to indicate this thread is executing

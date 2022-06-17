@@ -25,6 +25,7 @@
 #include <mysql/service_rpl_transaction_ctx.h>
 #include <mysql/service_rpl_transaction_write_set.h>
 #include <stddef.h>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -32,6 +33,7 @@
 #include "my_byteorder.h"
 #include "my_dbug.h"
 #include "my_inttypes.h"
+#include "my_murmur3.h"
 #include "plugin/group_replication/include/consistency_manager.h"
 #include "plugin/group_replication/include/observer_trans.h"
 #include "plugin/group_replication/include/plugin.h"
@@ -48,6 +50,7 @@
 */
 #define BUFFER_READ_PKE 8
 
+#define HASH_STRING_SEPARATOR "½"
 #define AFTER_PREPARE_SURPLUS_EXPECTED_GTID 7
 
 void cleanup_transaction_write_set(
@@ -91,10 +94,79 @@ int add_write_set(Transaction_context_log_event *tcle,
   return 0;
 }
 
+static uint64 generate_hash_pke(const std::string &pke) {
+  /* TODO it needs to 64bit */
+  return (murmur3_32((const uchar *)pke.c_str(), pke.size(), 0));
+}
+
+static uint64 add_ddl_set_to_log_event(Transaction_context_log_event *tcle,
+                                       const std::string &pke_schema_table) {
+  uchar buff[BUFFER_READ_PKE];
+  uint64 key = generate_hash_pke(pke_schema_table);
+
+  int8store(buff, key);
+  uint64 const tmp_str_sz =
+      base64_needed_encoded_length((uint64)BUFFER_READ_PKE);
+  char *write_set_value =
+      (char *)my_malloc(PSI_NOT_INSTRUMENTED, tmp_str_sz, MYF(MY_WME));
+  if (!write_set_value) {
+    /* purecov: begin inspected */
+    LogPluginErr(ERROR_LEVEL,
+                 ER_GRP_RPL_OOM_FAILED_TO_GENERATE_IDENTIFICATION_HASH);
+    return 1;
+    /* purecov: end */
+  }
+
+  if (base64_encode(buff, (size_t)BUFFER_READ_PKE, write_set_value)) {
+    /* purecov: begin inspected */
+    LogPluginErr(ERROR_LEVEL,
+                 ER_GRP_RPL_WRITE_IDENT_HASH_BASE64_ENCODING_FAILED);
+    return 1;
+    /* purecov: end */
+  }
+
+  tcle->add_read_set(write_set_value);
+  return 0;
+}
+
+int add_ddl_set(Transaction_context_log_event *tcle) {
+  DBUG_TRACE;
+
+  std::string pke_schema_table;
+
+  pke_schema_table.reserve(NAME_LEN * 3);
+  pke_schema_table.append(HASH_STRING_SEPARATOR);
+  pke_schema_table.append(current_thd->ddl_database);
+  pke_schema_table.append(HASH_STRING_SEPARATOR);
+  pke_schema_table.append(std::to_string(current_thd->ddl_database.size()));
+  pke_schema_table.append(current_thd->ddl_table);
+  pke_schema_table.append(HASH_STRING_SEPARATOR);
+  pke_schema_table.append(std::to_string(current_thd->ddl_table.size()));
+
+  return add_ddl_set_to_log_event(tcle, pke_schema_table);
+}
+
+static int add_ddl_sets_for_dml(Transaction_context_log_event *tcle,
+                                my_thread_id thread_id) {
+  DBUG_TRACE;
+
+  std::set<std::string> *database_table_set =
+      get_transaction_dml_database_table_set(thread_id);
+  if (database_table_set) {
+    for (std::set<std::string>::iterator it = database_table_set->begin();
+         it != database_table_set->end(); ++it) {
+      if (add_ddl_set_to_log_event(tcle, *it)) {
+        return 1;
+      }
+    }
+  }
+
+  return 0;
+}
+
 /*
   Transaction lifecycle events observers.
 */
-
 int group_replication_trans_before_dml(Trans_param *param, int &out) {
   DBUG_TRACE;
 
@@ -433,6 +505,11 @@ int group_replication_trans_before_commit(Trans_param *param) {
     if (param->is_create_table_as_query_block) {
       sequence_number = 0;
       may_have_sbr_stmts = true;
+    }
+
+    add_ddl_sets_for_dml(tcle, param->thread_id);
+  } else {
+    if (add_ddl_set(tcle)) {
     }
   }
 

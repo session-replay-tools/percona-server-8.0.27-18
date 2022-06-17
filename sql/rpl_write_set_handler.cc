@@ -608,6 +608,7 @@ bool add_pke(TABLE *table, THD *thd, const uchar *record) {
                             table->s->table_name.length);
     pke_schema_table.append(HASH_STRING_SEPARATOR);
     pke_schema_table.append(std::to_string(table->s->table_name.length));
+    ws_ctx->get_database_table_set()->insert(pke_schema_table);
 
     std::string pke;
     pke.reserve(NAME_LEN * 5);

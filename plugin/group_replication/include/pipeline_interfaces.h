@@ -145,7 +145,8 @@ class Pipeline_event {
         format_descriptor(fde_event),
         m_consistency_level(consistency_level),
         m_online_members(online_members),
-        m_online_members_memory_ownership(true) {}
+        m_online_members_memory_ownership(true),
+        m_view_generated(false) {}
 
   /**
     Create a new pipeline wrapper based on a log event.
@@ -170,7 +171,8 @@ class Pipeline_event {
         format_descriptor(fde_event),
         m_consistency_level(consistency_level),
         m_online_members(online_members),
-        m_online_members_memory_ownership(true) {}
+        m_online_members_memory_ownership(true),
+        m_view_generated(false) {}
 
   ~Pipeline_event() {
     if (packet != nullptr) {
@@ -327,6 +329,9 @@ class Pipeline_event {
     return m_online_members;
   }
 
+  bool is_view_generated() { return m_view_generated; }
+  void set_view_generated() { m_view_generated = true; }
+
   /**
     Release memory ownership of m_online_members.
   */
@@ -393,6 +398,7 @@ class Pipeline_event {
   enum_group_replication_consistency_level m_consistency_level;
   std::list<Gcs_member_identifier> *m_online_members;
   bool m_online_members_memory_ownership;
+  bool m_view_generated;
 };
 
 /**

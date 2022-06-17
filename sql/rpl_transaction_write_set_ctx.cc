@@ -23,6 +23,7 @@
 #include "sql/rpl_transaction_write_set_ctx.h"
 
 #include <stddef.h>
+#include <set>
 #include <utility>
 
 #include "m_string.h"
@@ -99,6 +100,11 @@ std::vector<uint64> *Rpl_transaction_write_set_ctx::get_write_set() {
   return &write_set;
 }
 
+std::set<std::string> *Rpl_transaction_write_set_ctx::get_database_table_set() {
+  DBUG_TRACE;
+  return &database_table_set;
+}
+
 void Rpl_transaction_write_set_ctx::reset_state() {
   DBUG_TRACE;
   clear_write_set();
@@ -109,6 +115,7 @@ void Rpl_transaction_write_set_ctx::reset_state() {
 void Rpl_transaction_write_set_ctx::clear_write_set() {
   DBUG_TRACE;
   write_set.clear();
+  database_table_set.clear();
   savepoint.clear();
   savepoint_list.clear();
 }
@@ -199,6 +206,7 @@ Transaction_write_set *get_transaction_write_set(unsigned long m_thread_id) {
   if (thd_ptr) {
     Rpl_transaction_write_set_ctx *transaction_write_set_ctx =
         thd_ptr->get_transaction()->get_transaction_write_set_ctx();
+
     int write_set_size = transaction_write_set_ctx->get_write_set()->size();
     if (write_set_size == 0) return nullptr;
 
@@ -217,6 +225,23 @@ Transaction_write_set *get_transaction_write_set(unsigned long m_thread_id) {
     }
   }
   return result_set;
+}
+
+std::set<std::string> *get_transaction_dml_database_table_set(
+    unsigned long m_thread_id) {
+  DBUG_TRACE;
+  std::set<std::string> *database_table_set = nullptr;
+  Find_thd_with_id find_thd_with_id(m_thread_id, false);
+
+  THD_ptr thd_ptr =
+      Global_THD_manager::get_instance()->find_thd(&find_thd_with_id);
+  if (thd_ptr) {
+    Rpl_transaction_write_set_ctx *transaction_write_set_ctx =
+        thd_ptr->get_transaction()->get_transaction_write_set_ctx();
+    database_table_set = transaction_write_set_ctx->get_database_table_set();
+  }
+
+  return database_table_set;
 }
 
 void Rpl_transaction_write_set_ctx::add_savepoint(char *name) {

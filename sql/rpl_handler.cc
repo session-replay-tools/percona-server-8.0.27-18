@@ -76,6 +76,8 @@ Binlog_relay_IO_delegate *binlog_relay_io_delegate;
 
 bool opt_replication_optimize_for_static_plugin_config{false};
 std::atomic<bool> opt_replication_sender_observe_commit_only{false};
+static void prepare_table_info(THD *thd, Trans_table_info *&table_info_list,
+                               uint &number_of_tables);
 
 Observer_info::Observer_info(void *ob, st_plugin_int *p)
     : observer(ob), plugin_int(p) {
@@ -620,8 +622,8 @@ bool has_cascade_foreign_key(TABLE *table) {
 /**
  Helper method to create table information for the hook call
  */
-void prepare_table_info(THD *thd, Trans_table_info *&table_info_list,
-                        uint &number_of_tables) {
+static void prepare_table_info(THD *thd, Trans_table_info *&table_info_list,
+                               uint &number_of_tables) {
   DBUG_TRACE;
 
   TABLE *open_tables = thd->open_tables;
@@ -634,12 +636,13 @@ void prepare_table_info(THD *thd, Trans_table_info *&table_info_list,
   // Gather table information
   std::vector<Trans_table_info> table_info_holder;
   for (; open_tables != nullptr; open_tables = open_tables->next) {
-    Trans_table_info table_info = {nullptr, 0, 0, false};
+    Trans_table_info table_info = {nullptr, nullptr, 0, 0, false};
 
     if (open_tables->no_replicate) {
       continue;
     }
 
+    table_info.db_name = open_tables->s->db.str;
     table_info.table_name = open_tables->s->table_name.str;
 
     uint primary_keys = 0;

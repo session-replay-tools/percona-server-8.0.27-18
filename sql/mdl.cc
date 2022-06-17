@@ -3502,7 +3502,9 @@ bool MDL_context::acquire_lock(MDL_request *mdl_request,
       wait_status = m_wait.timed_wait(m_owner, &abs_shortwait, false,
                                       mdl_request->key.get_wait_state_name());
 
-      if (wait_status != MDL_wait::WS_EMPTY) break;
+      if (wait_status != MDL_wait::WS_EMPTY) {
+        break;
+      }
 
       if (lock->needs_connection_check() && !m_owner->is_connected()) {
         /*
@@ -3533,9 +3535,10 @@ bool MDL_context::acquire_lock(MDL_request *mdl_request,
 
       set_timespec(&abs_shortwait, 1);
     }
-    if (wait_status == MDL_wait::WS_EMPTY)
+    if (wait_status == MDL_wait::WS_EMPTY) {
       wait_status = m_wait.timed_wait(m_owner, &abs_timeout, true,
                                       mdl_request->key.get_wait_state_name());
+    }
   } else {
     wait_status = m_wait.timed_wait(m_owner, &abs_timeout, true,
                                     mdl_request->key.get_wait_state_name());

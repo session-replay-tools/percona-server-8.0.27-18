@@ -27,6 +27,7 @@
 #include <atomic>
 #include <list>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -117,6 +118,8 @@ class Rpl_transaction_write_set_ctx {
     transaction_ctx object.
   */
   std::vector<uint64> *get_write_set();
+
+  std::set<std::string> *get_database_table_set();
 
   /**
     Reset the object so it can be used for a new transaction.
@@ -248,6 +251,7 @@ class Rpl_transaction_write_set_ctx {
   void clear_write_set();
 
   std::vector<uint64> write_set;
+  std::set<std::string> database_table_set;
   bool m_has_missing_keys;
   bool m_has_related_foreign_keys;
 
