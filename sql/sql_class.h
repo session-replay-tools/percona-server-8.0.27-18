@@ -4771,6 +4771,8 @@ class THD : public MDL_context_owner,
 
  public:
   Transactional_ddl_context m_transactional_ddl{this};
+  std::list<std::string> ddl_items;
+  std::list<std::string> special_ddl_items;
 
   /**
     Flag to indicate this thread is executing

@@ -1664,6 +1664,19 @@ bool mysql_rm_table(THD *thd, TABLE_LIST *tables, bool if_exists,
 
     /* mark for close and remove all cached entries */
     thd->push_internal_handler(&err_handler);
+
+    thd->ddl_items.clear();
+    thd->special_ddl_items.clear();
+    TABLE_LIST *ddl_table;
+    for (ddl_table = tables; ddl_table; ddl_table = ddl_table->next_local) {
+      std::string database_table;
+      database_table.append(ddl_table->db);
+      database_table.append(",");
+      database_table.append(ddl_table->table_name);
+      thd->ddl_items.push_back(database_table);
+      thd->special_ddl_items.push_back(ddl_table->db);
+    }
+
     error = mysql_rm_table_no_locks(thd, tables, if_exists, drop_temporary,
                                     false, &not_used, &post_ddl_htons,
                                     &fk_invalidator, &safe_to_release_mdl);
@@ -10181,6 +10194,15 @@ bool mysql_create_table(THD *thd, TABLE_LIST *create_table,
                                     create_info->db_type);
     }
 
+    thd->ddl_items.clear();
+    thd->special_ddl_items.clear();
+    std::string database_table;
+    database_table.append(create_table->db);
+    database_table.append(",");
+    database_table.append(create_table->table_name);
+    thd->ddl_items.push_back(database_table);
+    thd->special_ddl_items.push_back(create_table->db);
+
     /*
       Unless we are executing CREATE TEMPORARY TABLE we need to commit
       changes to the data-dictionary, SE and binary log and possibly run
@@ -16267,6 +16289,15 @@ bool mysql_alter_table(THD *thd, const char *new_db, const char *new_name,
                        HA_CREATE_INFO *create_info, TABLE_LIST *table_list,
                        Alter_info *alter_info) {
   DBUG_TRACE;
+
+  thd->ddl_items.clear();
+  thd->special_ddl_items.clear();
+  std::string database_table;
+  database_table.append(table_list->db);
+  database_table.append(",");
+  database_table.append(table_list->table_name);
+  thd->ddl_items.push_back(database_table);
+  thd->special_ddl_items.push_back(table_list->db);
 
   /*
    This change is necessary for MyRocks at

@@ -275,8 +275,8 @@ int Certification_handler::handle_transaction_id(Pipeline_event *pevent,
   */
   seq_number =
       cert_module->certify(tcle->get_snapshot_version(), tcle->get_write_set(),
-                           !tcle->is_gtid_specified(), tcle->get_server_uuid(),
-                           gle, local_transaction);
+                           tcle->get_read_set(), !tcle->is_gtid_specified(),
+                           tcle->get_server_uuid(), gle, local_transaction);
 
 after_certify:
   if (local_transaction) {

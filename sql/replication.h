@@ -73,6 +73,7 @@ enum Trans_flags {
  This represents table metadata involved in a transaction
  */
 typedef struct Trans_table_info {
+  const char *db_name;
   const char *table_name;
   uint number_of_primary_keys;
   /// The db_type of the storage engine used by the table

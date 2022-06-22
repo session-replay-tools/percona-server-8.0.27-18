@@ -599,6 +599,7 @@ bool add_pke(TABLE *table, THD *thd, const uchar *record) {
   if (table->key_info && (table->s->primary_key < MAX_KEY)) {
     ptrdiff_t ptrdiff = record - table->record[0];
     std::string pke_schema_table;
+    std::string pke_schema;
     pke_schema_table.reserve(NAME_LEN * 3);
     pke_schema_table.append(HASH_STRING_SEPARATOR);
     pke_schema_table.append(table->s->db.str, table->s->db.length);
@@ -608,6 +609,9 @@ bool add_pke(TABLE *table, THD *thd, const uchar *record) {
                             table->s->table_name.length);
     pke_schema_table.append(HASH_STRING_SEPARATOR);
     pke_schema_table.append(std::to_string(table->s->table_name.length));
+    ws_ctx->get_database_table_set()->insert(pke_schema_table);
+    pke_schema.append(table->s->db.str, table->s->db.length);
+    ws_ctx->get_database_set()->insert(pke_schema);
 
     std::string pke;
     pke.reserve(NAME_LEN * 5);
