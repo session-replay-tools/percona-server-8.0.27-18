@@ -129,30 +129,102 @@ static uint64 add_ddl_set_to_log_event(Transaction_context_log_event *tcle,
   return 0;
 }
 
+static uint64 add_ddl_seperator_to_log_event(
+    Transaction_context_log_event *tcle) {
+  uchar buff[BUFFER_READ_PKE];
+  uint64 key = 0;
+
+  int8store(buff, key);
+  uint64 const tmp_str_sz =
+      base64_needed_encoded_length((uint64)BUFFER_READ_PKE);
+  char *write_set_value =
+      (char *)my_malloc(PSI_NOT_INSTRUMENTED, tmp_str_sz, MYF(MY_WME));
+  if (!write_set_value) {
+    /* purecov: begin inspected */
+    LogPluginErr(ERROR_LEVEL,
+                 ER_GRP_RPL_OOM_FAILED_TO_GENERATE_IDENTIFICATION_HASH);
+    return 1;
+    /* purecov: end */
+  }
+
+  if (base64_encode(buff, (size_t)BUFFER_READ_PKE, write_set_value)) {
+    /* purecov: begin inspected */
+    LogPluginErr(ERROR_LEVEL,
+                 ER_GRP_RPL_WRITE_IDENT_HASH_BASE64_ENCODING_FAILED);
+    return 1;
+    /* purecov: end */
+  }
+
+  tcle->add_read_set(write_set_value);
+  return 0;
+}
+
 int add_ddl_set(Transaction_context_log_event *tcle) {
   DBUG_TRACE;
 
-  std::string pke_schema_table;
+  if (!current_thd->special_ddl_items.empty()) {
+    for (auto const &database : current_thd->special_ddl_items) {
+      if (add_ddl_set_to_log_event(tcle, database)) {
+        return 1;
+      }
+    }
+  }
 
-  pke_schema_table.reserve(NAME_LEN * 3);
-  pke_schema_table.append(HASH_STRING_SEPARATOR);
-  pke_schema_table.append(current_thd->ddl_database);
-  pke_schema_table.append(HASH_STRING_SEPARATOR);
-  pke_schema_table.append(std::to_string(current_thd->ddl_database.size()));
-  pke_schema_table.append(current_thd->ddl_table);
-  pke_schema_table.append(HASH_STRING_SEPARATOR);
-  pke_schema_table.append(std::to_string(current_thd->ddl_table.size()));
+  if (!current_thd->ddl_items.empty()) {
+    if (add_ddl_seperator_to_log_event(tcle)) {
+      return 1;
+    }
+    if (add_ddl_seperator_to_log_event(tcle)) {
+      return 1;
+    }
+    for (auto const &database_table : current_thd->ddl_items) {
+      std::string::size_type pos = database_table.find(",");
+      std::string database = database_table.substr(0, pos);
+      std::string table = database_table.substr(pos + 1);
 
-  return add_ddl_set_to_log_event(tcle, pke_schema_table);
+      std::string pke_schema_table;
+      pke_schema_table.reserve(NAME_LEN * 3);
+      pke_schema_table.append(HASH_STRING_SEPARATOR);
+      pke_schema_table.append(database);
+      pke_schema_table.append(HASH_STRING_SEPARATOR);
+      pke_schema_table.append(std::to_string(database.size()));
+      pke_schema_table.append(table);
+      pke_schema_table.append(HASH_STRING_SEPARATOR);
+      pke_schema_table.append(std::to_string(table.size()));
+
+      if (add_ddl_set_to_log_event(tcle, pke_schema_table)) {
+        return 1;
+      }
+    }
+  }
+  return 0;
 }
 
 static int add_ddl_sets_for_dml(Transaction_context_log_event *tcle,
                                 my_thread_id thread_id) {
   DBUG_TRACE;
 
+  std::set<std::string> *database_set =
+      get_transaction_dml_database_set(thread_id);
+  if (database_set) {
+    for (std::set<std::string>::iterator it = database_set->begin();
+         it != database_set->end(); ++it) {
+      if (add_ddl_set_to_log_event(tcle, *it)) {
+        return 1;
+      }
+    }
+  }
+
   std::set<std::string> *database_table_set =
       get_transaction_dml_database_table_set(thread_id);
   if (database_table_set) {
+    if (add_ddl_seperator_to_log_event(tcle)) {
+      return 1;
+    }
+    if (add_ddl_seperator_to_log_event(tcle)) {
+      return 1;
+    }
+
     for (std::set<std::string>::iterator it = database_table_set->begin();
          it != database_table_set->end(); ++it) {
       if (add_ddl_set_to_log_event(tcle, *it)) {
@@ -507,9 +579,12 @@ int group_replication_trans_before_commit(Trans_param *param) {
       may_have_sbr_stmts = true;
     }
 
-    add_ddl_sets_for_dml(tcle, param->thread_id);
+    if (add_ddl_sets_for_dml(tcle, param->thread_id)) {
+      // TODO clear readset
+    }
   } else {
     if (add_ddl_set(tcle)) {
+      // TODO clear readset
     }
   }
 

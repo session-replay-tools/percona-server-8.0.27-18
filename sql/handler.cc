@@ -8150,6 +8150,15 @@ int binlog_log_row(TABLE *table, const uchar *before_record,
             }
           }
         }
+
+        /* Clear all previous database table set*/
+        std::set<std::string> *database_table_set =
+            get_transaction_dml_database_table_set(thd->thread_id());
+        database_table_set->clear();
+        std::set<std::string> *database_set =
+            get_transaction_dml_database_set(thd->thread_id());
+        database_set->clear();
+
         std::array<const uchar *, 2> records{after_record, before_record};
         for (auto rec : records) {
           if (rec != nullptr) {

@@ -120,6 +120,7 @@ class Rpl_transaction_write_set_ctx {
   std::vector<uint64> *get_write_set();
 
   std::set<std::string> *get_database_table_set();
+  std::set<std::string> *get_database_set();
 
   /**
     Reset the object so it can be used for a new transaction.
@@ -252,6 +253,7 @@ class Rpl_transaction_write_set_ctx {
 
   std::vector<uint64> write_set;
   std::set<std::string> database_table_set;
+  std::set<std::string> database_set;
   bool m_has_missing_keys;
   bool m_has_related_foreign_keys;
 

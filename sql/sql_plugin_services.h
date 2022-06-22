@@ -285,9 +285,9 @@ static struct rpl_transaction_ctx_service_st rpl_transaction_ctx_handler = {
 };
 
 static struct transaction_write_set_service_st transaction_write_set_handler = {
-    get_transaction_write_set, get_transaction_dml_database_table_set,
-    require_full_write_set, set_write_set_memory_size_limit,
-    update_write_set_memory_size_limit};
+    get_transaction_write_set,        get_transaction_dml_database_table_set,
+    get_transaction_dml_database_set, require_full_write_set,
+    set_write_set_memory_size_limit,  update_write_set_memory_size_limit};
 
 static struct mysql_locking_service_st locking_service_handler = {
     mysql_acquire_locking_service_locks, mysql_release_locking_service_locks};

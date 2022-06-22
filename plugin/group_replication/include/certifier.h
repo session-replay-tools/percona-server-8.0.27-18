@@ -277,6 +277,14 @@ class Certifier : public Certifier_interface {
                   const char *member_uuid, Gtid_log_event *gle,
                   bool local_transaction);
 
+  bool certify_ddl_conflict(Gtid_set *snapshot_version,
+                            std::list<const char *> *read_set,
+                            bool has_write_set, bool has_seperator);
+
+  void add_ddl_items(Gtid_set *snapshot_version,
+                     std::list<const char *> *read_set, bool has_write_set,
+                     bool has_seperator);
+
   /**
     Returns the transactions in stable set in text format, that is, the set of
     transactions already applied on all group members.
@@ -597,6 +605,7 @@ class Certifier : public Certifier_interface {
   Certification_index certification_index;
 
   Certification_ddl_info cert_ddl_info;
+  Certification_ddl_info cert_special_ddl_info;
 
   Sid_map *certification_info_sid_map;
 
@@ -747,6 +756,8 @@ class Certifier : public Certifier_interface {
   bool add_item(const char *item, Gtid_set_ref *snapshot_version,
                 int64 *item_previous_sequence_number);
   bool add_ddl_item(const char *item, Gtid_set *snapshot_version, bool dml);
+  bool add_special_ddl_item(const char *item, Gtid_set *snapshot_version,
+                            bool special_ddl);
 
   /**
     Find the snapshot_version corresponding to an item. Return if
@@ -759,6 +770,9 @@ class Certifier : public Certifier_interface {
   Gtid_set *get_certified_write_set_snapshot_version(const char *item);
 
   Gtid_set *get_certified_ddl_set_snapshot_version(const char *item, bool dml);
+
+  Gtid_set *get_certified_special_ddl_set_snapshot_version(const char *item,
+                                                           bool special_ddl);
 
   /**
     Computes intersection between all sets received, so that we

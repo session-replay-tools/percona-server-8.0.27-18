@@ -66,6 +66,8 @@ extern "C" struct transaction_write_set_service_st {
       unsigned long m_thread_id);
   std::set<std::string> *(*get_transaction_dml_database_table_set)(
       unsigned long m_thread_id);
+  std::set<std::string> *(*get_transaction_dml_database_set)(
+      unsigned long m_thread_id);
   void (*require_full_write_set)(bool requires_ws);
   void (*set_write_set_memory_size_limit)(uint64 size_limit);
   void (*update_write_set_memory_size_limit)(uint64 size_limit);
@@ -78,6 +80,8 @@ extern "C" struct transaction_write_set_service_st {
 #define get_transaction_dml_database_table_set(m_thread_id)              \
   transaction_write_set_service->get_transaction_dml_database_table_set( \
       m_thread_id)
+#define get_transaction_dml_database_set(m_thread_id) \
+  transaction_write_set_service->get_transaction_dml_database_set(m_thread_id)
 #define require_full_write_set(requires_ws) \
   transaction_write_set_service->require_full_write_set(requires_ws)
 #define set_write_set_memory_size_limit(size_limit) \
@@ -89,6 +93,8 @@ extern "C" struct transaction_write_set_service_st {
 
 Transaction_write_set *get_transaction_write_set(unsigned long m_thread_id);
 std::set<std::string> *get_transaction_dml_database_table_set(
+    unsigned long m_thread_id);
+std::set<std::string> *get_transaction_dml_database_set(
     unsigned long m_thread_id);
 
 void require_full_write_set(bool requires_ws);

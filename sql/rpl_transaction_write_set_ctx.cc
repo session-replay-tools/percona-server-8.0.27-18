@@ -105,6 +105,11 @@ std::set<std::string> *Rpl_transaction_write_set_ctx::get_database_table_set() {
   return &database_table_set;
 }
 
+std::set<std::string> *Rpl_transaction_write_set_ctx::get_database_set() {
+  DBUG_TRACE;
+  return &database_set;
+}
+
 void Rpl_transaction_write_set_ctx::reset_state() {
   DBUG_TRACE;
   clear_write_set();
@@ -242,6 +247,23 @@ std::set<std::string> *get_transaction_dml_database_table_set(
   }
 
   return database_table_set;
+}
+
+std::set<std::string> *get_transaction_dml_database_set(
+    unsigned long m_thread_id) {
+  DBUG_TRACE;
+  std::set<std::string> *database_set = nullptr;
+  Find_thd_with_id find_thd_with_id(m_thread_id, false);
+
+  THD_ptr thd_ptr =
+      Global_THD_manager::get_instance()->find_thd(&find_thd_with_id);
+  if (thd_ptr) {
+    Rpl_transaction_write_set_ctx *transaction_write_set_ctx =
+        thd_ptr->get_transaction()->get_transaction_write_set_ctx();
+    database_set = transaction_write_set_ctx->get_database_set();
+  }
+
+  return database_set;
 }
 
 void Rpl_transaction_write_set_ctx::add_savepoint(char *name) {

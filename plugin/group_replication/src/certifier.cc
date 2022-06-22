@@ -36,6 +36,7 @@
 #include "plugin/group_replication/libmysqlgcs/include/mysql/gcs/gcs_logging_system.h"
 
 #define MAX_CERT_DELETE_ITEMS 65536
+#define SEPERATOR_DDL "AAAAAAAAAAA="
 
 const std::string Certifier::GTID_EXTRACTED_NAME = "gtid_extracted";
 const std::string Certifier::CERTIFICATION_INFO_ERROR_NAME =
@@ -786,6 +787,107 @@ void Certifier::increment_parallel_applier_sequence_number(
   parallel_applier_sequence_number++;
 }
 
+bool Certifier::certify_ddl_conflict(Gtid_set *snapshot_version,
+                                     std::list<const char *> *read_set,
+                                     bool has_write_set, bool has_seperator) {
+  bool last_sep_ddl = false;
+  bool table_start = false;
+
+  for (std::list<const char *>::iterator it = read_set->begin();
+       it != read_set->end(); ++it) {
+    /* TODO It has no consideration for xa */
+    if (strcmp(*it, SEPERATOR_DDL) != 0) {
+      if (table_start) {
+        Gtid_set *certified_ddl_set_snapshot_version =
+            get_certified_ddl_set_snapshot_version(*it, has_write_set);
+        if (certified_ddl_set_snapshot_version != nullptr &&
+            !certified_ddl_set_snapshot_version->is_subset(snapshot_version)) {
+          if (has_write_set) {
+            LogPluginErrMsg(INFORMATION_LEVEL, ER_LOG_PRINTF_MSG,
+                            "dml conflicts with concurrent ddl");
+          } else {
+            LogPluginErrMsg(INFORMATION_LEVEL, ER_LOG_PRINTF_MSG,
+                            "ddl conflicts with concurrent dml");
+          }
+          return false;
+        }
+      } else {
+        if (has_seperator) {
+          Gtid_set *certified_ddl_set_snapshot_version =
+              get_certified_special_ddl_set_snapshot_version(*it, false);
+          if (certified_ddl_set_snapshot_version != nullptr &&
+              !certified_ddl_set_snapshot_version->is_subset(
+                  snapshot_version)) {
+            if (has_write_set) {
+              LogPluginErrMsg(INFORMATION_LEVEL, ER_LOG_PRINTF_MSG,
+                              "dml conflicts with concurrent database ddl");
+            } else {
+              LogPluginErrMsg(INFORMATION_LEVEL, ER_LOG_PRINTF_MSG,
+                              "database ddl conflicts with concurrent dml");
+            }
+            return false;
+          }
+        } else {
+          if (has_write_set) {
+            LogPluginErrMsg(INFORMATION_LEVEL, ER_LOG_PRINTF_MSG,
+                            "It has write set but has no seperator ");
+          } else {
+            Gtid_set *certified_ddl_set_snapshot_version =
+                get_certified_special_ddl_set_snapshot_version(*it, true);
+            if (certified_ddl_set_snapshot_version != nullptr &&
+                !certified_ddl_set_snapshot_version->is_subset(
+                    snapshot_version)) {
+              LogPluginErrMsg(INFORMATION_LEVEL, ER_LOG_PRINTF_MSG,
+                              "database ddl conflicts with concurrent dml");
+              return false;
+            }
+          }
+        }
+      }
+      last_sep_ddl = false;
+    } else {
+      if (last_sep_ddl) {
+        table_start = true;
+      }
+      last_sep_ddl = true;
+    }
+  }
+
+  return true;
+}
+
+void Certifier::add_ddl_items(Gtid_set *snapshot_version,
+                              std::list<const char *> *read_set,
+                              bool has_write_set, bool has_seperator) {
+  bool last_sep_ddl = false;
+  bool table_start = false;
+  for (std::list<const char *>::iterator it = read_set->begin();
+       it != read_set->end(); ++it) {
+    /* TODO It has no consideration for xa */
+    if (strcmp(*it, SEPERATOR_DDL) != 0) {
+      if (table_start) {
+        add_ddl_item(*it, snapshot_version, has_write_set);
+      } else {
+        if (has_seperator) {
+          add_special_ddl_item(*it, snapshot_version, false);
+        } else {
+          if (has_write_set) {
+            add_special_ddl_item(*it, snapshot_version, false);
+          } else {
+            add_special_ddl_item(*it, snapshot_version, true);
+          }
+        }
+      }
+      last_sep_ddl = false;
+    } else {
+      if (last_sep_ddl) {
+        table_start = true;
+      }
+      last_sep_ddl = true;
+    }
+  }
+}
+
 rpl_gno Certifier::certify(Gtid_set *snapshot_version,
                            std::list<const char *> *write_set,
                            std::list<const char *> *read_set,
@@ -795,6 +897,7 @@ rpl_gno Certifier::certify(Gtid_set *snapshot_version,
   rpl_gno result = 0;
   const bool has_write_set = !write_set->empty();
   const bool has_read_set = !read_set->empty();
+  bool has_seperator = false;
 
   if (!is_initialized()) {
     LogPluginErr(INFORMATION_LEVEL, ER_GRP_RPL_CERTIFY_IS_INITIALIZED);
@@ -827,21 +930,24 @@ rpl_gno Certifier::certify(Gtid_set *snapshot_version,
         goto end;
     }
 
+    bool last_sep_ddl = false;
+    /* Add ddl special readset for resolving dml and ddl conflicts */
     for (std::list<const char *>::iterator it = read_set->begin();
          it != read_set->end(); ++it) {
-      Gtid_set *certified_ddl_set_snapshot_version =
-          get_certified_ddl_set_snapshot_version(*it, has_write_set);
-      if (certified_ddl_set_snapshot_version != nullptr &&
-          !certified_ddl_set_snapshot_version->is_subset(snapshot_version)) {
-        if (has_write_set) {
-          LogPluginErrMsg(INFORMATION_LEVEL, ER_LOG_PRINTF_MSG,
-                          "dml conflicts with concurrent ddl");
-        } else {
-          LogPluginErrMsg(INFORMATION_LEVEL, ER_LOG_PRINTF_MSG,
-                          "ddl conflicts with concurrent dml");
+      if (strcmp(*it, SEPERATOR_DDL) != 0) {
+        last_sep_ddl = false;
+      } else {
+        if (last_sep_ddl) {
+          has_seperator = true;
+          break;
         }
-        goto end;
+        last_sep_ddl = true;
       }
+    }
+
+    if (!certify_ddl_conflict(snapshot_version, read_set, has_write_set,
+                              has_seperator)) {
+      goto end;
     }
   }
 
@@ -1023,12 +1129,7 @@ rpl_gno Certifier::certify(Gtid_set *snapshot_version,
     }
   } else {
     if (conflict_detection_enable && has_read_set) {
-      /* Add ddl special readset for resolving dml and ddl conflicts */
-      for (std::list<const char *>::iterator it = read_set->begin();
-           it != read_set->end(); ++it) {
-        /* TODO It has no consideration for xa */
-        add_ddl_item(*it, snapshot_version, has_write_set);
-      }
+      add_ddl_items(snapshot_version, read_set, has_write_set, has_seperator);
     }
   }
 
@@ -1331,6 +1432,36 @@ bool Certifier::add_ddl_item(const char *item, Gtid_set *snapshot_version,
   return error;
 }
 
+bool Certifier::add_special_ddl_item(const char *item,
+                                     Gtid_set *snapshot_version,
+                                     bool special_ddl) {
+  DBUG_TRACE;
+  mysql_mutex_assert_owner(&LOCK_certification_info);
+  bool error = true;
+  Cert_ddl_basic_info info;
+  std::string key(item);
+  Certification_ddl_info::iterator it = cert_special_ddl_info.find(key);
+
+  if (it == cert_special_ddl_info.end()) {
+    Sid_map *sid_map = new Sid_map(nullptr);
+    Gtid_set *generated_snapshot_version = new Gtid_set(sid_map);
+    generated_snapshot_version->add_gtid_set(snapshot_version);
+
+    info.gtid_ref = generated_snapshot_version;
+    info.is_ddl = special_ddl;
+    std::pair<Certification_ddl_info::iterator, bool> ret =
+        cert_special_ddl_info.insert(
+            std::pair<std::string, Cert_ddl_basic_info>(key, info));
+    error = !ret.second;
+  } else {
+    it->second.is_ddl = special_ddl;
+    it->second.gtid_ref->add_gtid_set(snapshot_version);
+    error = false;
+  }
+
+  return error;
+}
+
 Gtid_set *Certifier::get_certified_write_set_snapshot_version(
     const char *item) {
   DBUG_TRACE;
@@ -1368,6 +1499,33 @@ Gtid_set *Certifier::get_certified_ddl_set_snapshot_version(const char *item,
       return it->second.gtid_ref;
     } else {
       if (!dml) {
+        return it->second.gtid_ref;
+      } else {
+        return nullptr;
+      }
+    }
+  }
+}
+
+Gtid_set *Certifier::get_certified_special_ddl_set_snapshot_version(
+    const char *item, bool special_ddl) {
+  DBUG_TRACE;
+  mysql_mutex_assert_owner(&LOCK_certification_info);
+
+  if (!is_initialized()) return nullptr; /* purecov: inspected */
+
+  Certification_ddl_info::iterator it;
+  std::string item_str(item);
+
+  it = cert_special_ddl_info.find(item_str);
+
+  if (it == cert_special_ddl_info.end()) {
+    return nullptr;
+  } else {
+    if (it->second.is_ddl) {
+      return it->second.gtid_ref;
+    } else {
+      if (special_ddl) {
         return it->second.gtid_ref;
       } else {
         return nullptr;

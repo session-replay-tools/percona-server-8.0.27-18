@@ -736,6 +736,12 @@ bool mysql_rm_db(THD *thd, const LEX_CSTRING &db, bool if_exists) {
 
   dd::cache::Dictionary_client::Auto_releaser releaser(thd->dd_client());
 
+  thd->ddl_items.clear();
+  thd->special_ddl_items.clear();
+  std::string ddl_database;
+  ddl_database.append(db.str);
+  thd->special_ddl_items.push_back(ddl_database);
+
   // Reject dropping the system schema except for system threads.
   if (!thd->is_dd_system_thread() &&
       dd::get_dictionary()->is_dd_schema_name(dd::String_type(db.str))) {
