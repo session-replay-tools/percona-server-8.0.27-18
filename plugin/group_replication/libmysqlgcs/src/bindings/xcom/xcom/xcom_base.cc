@@ -5374,6 +5374,7 @@ pax_msg *dispatch_op(site_def const *site, pax_msg *p, linkage *reply_queue) {
         }
         pax_msg *msg = pax_faked_msg_new(new_synode, p->from);
         if (p->force_delivery) pm_next->force_delivery = 1;
+        ref_msg(msg);
         prepare(msg, skip_op);
         msg->msg_type = no_op;
         handle_skip(site, pm_next, msg);
