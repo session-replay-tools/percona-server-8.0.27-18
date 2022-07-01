@@ -31,6 +31,8 @@ class View_change_log_event;
 struct GROUP_REPLICATION_CONNECTION_STATUS_CALLBACKS;
 struct GROUP_REPLICATION_GROUP_MEMBERS_CALLBACKS;
 struct GROUP_REPLICATION_GROUP_MEMBER_STATS_CALLBACKS;
+struct GROUP_REPLICATION_FLOW_CONTROL_STATS_CALLBACKS;
+struct GROUP_REPLICATION_MGR_STATS_CALLBACKS;
 
 /*
   Group Replication plugin handler function accessors.
@@ -52,6 +54,11 @@ bool get_group_replication_group_members_info(
 bool get_group_replication_group_member_stats_info(
     unsigned int index,
     const GROUP_REPLICATION_GROUP_MEMBER_STATS_CALLBACKS &callbacks);
+bool get_group_replication_flow_control_stats_info(
+    unsigned int index,
+    const GROUP_REPLICATION_FLOW_CONTROL_STATS_CALLBACKS &callbacks);
+bool get_group_replication_mgr_stats_info(
+    unsigned int index, const GROUP_REPLICATION_MGR_STATS_CALLBACKS &callbacks);
 unsigned int get_group_replication_members_number_info();
 /**
   Getter to extract the group_name in GR which, this can be used

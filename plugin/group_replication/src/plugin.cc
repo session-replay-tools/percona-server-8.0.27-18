@@ -232,6 +232,7 @@ mysql_mutex_t *get_plugin_running_lock() { return &lv.plugin_running_mutex; }
 mysql_mutex_t *get_plugin_applier_module_lock() {
   return &lv.plugin_applier_module_mutex;
 }
+mysql_mutex_t *get_mgr_stats_lock() { return &lv.mgr_request_stats_mutex; }
 
 bool plugin_is_group_replication_running() {
   return lv.group_replication_running;
@@ -474,6 +475,8 @@ struct st_mysql_group_replication group_replication_descriptor = {
     plugin_get_connection_status,
     plugin_get_group_members,
     plugin_get_group_member_stats,
+    plugin_get_group_flow_control_stats,
+    plugin_get_group_mgr_stats,
     plugin_get_group_members_number,
 };
 
@@ -523,6 +526,22 @@ bool plugin_get_group_member_stats(
 
   return get_group_member_stats(index, callbacks, group_member_mgr, gcs_module,
                                 channel_name);
+}
+
+bool plugin_get_group_flow_control_stats(
+    uint index,
+    const GROUP_REPLICATION_FLOW_CONTROL_STATS_CALLBACKS &callbacks) {
+  char *channel_name = applier_module_channel_name;
+
+  return get_group_flow_control_stats(index, callbacks, group_member_mgr,
+                                      channel_name);
+}
+
+bool plugin_get_group_mgr_stats(
+    uint index, const GROUP_REPLICATION_MGR_STATS_CALLBACKS &callbacks) {
+  char *channel_name = applier_module_channel_name;
+
+  return get_group_mgr_stats(index, callbacks, group_member_mgr, channel_name);
 }
 
 int plugin_group_replication_start(char **error_message) {
@@ -1943,6 +1962,10 @@ int plugin_group_replication_init(MYSQL_PLUGIN plugin_info) {
                    MY_MUTEX_INIT_FAST);
   mysql_mutex_init(key_GR_LOCK_plugin_running, &lv.plugin_applier_module_mutex,
                    MY_MUTEX_INIT_FAST);
+
+  mysql_mutex_init(key_GR_LOCK_group_mgr_stat_lock, &lv.mgr_request_stats_mutex,
+                   MY_MUTEX_INIT_FAST);
+
   mysql_mutex_init(key_GR_LOCK_force_members_running,
                    &lv.force_members_running_mutex, MY_MUTEX_INIT_FAST);
 
@@ -2186,6 +2209,7 @@ int plugin_group_replication_deinit(void *p) {
   mysql_mutex_destroy(&lv.plugin_running_mutex);
   mysql_mutex_destroy(&lv.plugin_applier_module_mutex);
   mysql_mutex_destroy(&lv.force_members_running_mutex);
+  mysql_mutex_destroy(&lv.mgr_request_stats_mutex);
   mysql_mutex_destroy(&lv.plugin_modules_termination_mutex);
 
   delete shared_plugin_stop_lock;

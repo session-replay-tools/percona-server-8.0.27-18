@@ -320,6 +320,42 @@ static ulong getusec() {
   return sec;
 }
 
+static void do_mgr_stat(unsigned long long int *mgr_stat, ulong usec) {
+  if (usec <= 10000) {
+    mgr_stat[0]++;
+  } else if (usec <= 20000) {
+    mgr_stat[1]++;
+  } else if (usec <= 30000) {
+    mgr_stat[2]++;
+  } else if (usec <= 40000) {
+    mgr_stat[3]++;
+  } else if (usec <= 50000) {
+    mgr_stat[4]++;
+  } else if (usec <= 60000) {
+    mgr_stat[5]++;
+  } else if (usec <= 70000) {
+    mgr_stat[6]++;
+  } else if (usec <= 80000) {
+    mgr_stat[7]++;
+  } else if (usec <= 90000) {
+    mgr_stat[8]++;
+  } else if (usec <= 100000) {
+    mgr_stat[9]++;
+  } else if (usec <= 200000) {
+    mgr_stat[10]++;
+  } else if (usec <= 300000) {
+    mgr_stat[11]++;
+  } else if (usec <= 400000) {
+    mgr_stat[12]++;
+  } else if (usec <= 500000) {
+    mgr_stat[13]++;
+  } else if (usec <= 1000000) {
+    mgr_stat[14]++;
+  } else {
+    mgr_stat[15]++;
+  }
+}
+
 int group_replication_trans_before_commit(Trans_param *param) {
   DBUG_TRACE;
   int error = 0;
@@ -761,6 +797,10 @@ int group_replication_trans_before_commit(Trans_param *param) {
                       "MGR request time:%luus, server id:%lu, thread_id:%u",
                       time_diff, get_server_id(), param->thread_id);
     }
+    mysql_mutex_t *mgr_mutex = get_mgr_stats_lock();
+    mysql_mutex_lock(mgr_mutex);
+    do_mgr_stat(applier_module->get_mgr_stat(), time_diff);
+    mysql_mutex_unlock(mgr_mutex);
   }
 
 err:

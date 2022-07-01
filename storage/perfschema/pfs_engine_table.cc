@@ -124,8 +124,10 @@
 #include "storage/perfschema/table_replication_asynchronous_connection_failover.h"
 #include "storage/perfschema/table_replication_connection_configuration.h"
 #include "storage/perfschema/table_replication_connection_status.h"
+#include "storage/perfschema/table_replication_group_flow_control_stats.h"
 #include "storage/perfschema/table_replication_group_member_stats.h"
 #include "storage/perfschema/table_replication_group_members.h"
+#include "storage/perfschema/table_replication_group_mgr_stats.h"
 #include "storage/perfschema/table_rpl_async_connection_failover_managed.h"
 #include "storage/perfschema/table_session_account_connect_attrs.h"
 #include "storage/perfschema/table_session_connect_attrs.h"
@@ -581,6 +583,8 @@ static PFS_engine_table_share *all_shares[] = {
     &table_replication_applier_filters::m_share,
     &table_replication_applier_global_filters::m_share,
     &table_replication_asynchronous_connection_failover::m_share,
+    &table_replication_group_flow_control_stats::m_share,
+    &table_replication_group_mgr_stats::m_share,
     &table_rpl_async_connection_failover_managed::m_share,
     &table_log_status::m_share,
 

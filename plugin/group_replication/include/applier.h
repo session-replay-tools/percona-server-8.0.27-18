@@ -56,6 +56,7 @@
 #define APPLIER_GTID_CHECK_TIMEOUT_ERROR -1
 #define APPLIER_RELAY_LOG_NOT_INITED -2
 #define APPLIER_THREAD_ABORTED -3
+#define MGR_STAT_ITEMS 16
 
 extern char applier_module_channel_name[];
 
@@ -319,6 +320,7 @@ class Applier_module_interface {
                      std::list<Gcs_member_identifier> *online_members) = 0;
   virtual int handle_pipeline_action(Pipeline_action *action) = 0;
   virtual Flow_control_module *get_flow_control_module() = 0;
+  virtual long long unsigned int *get_mgr_stat() = 0;
   virtual void run_flow_control_step(bool) = 0;
   virtual int purge_applier_queue_and_restart_applier_module() = 0;
   virtual bool queue_and_wait_on_queue_checkpoint(
@@ -772,6 +774,8 @@ class Applier_module : public Applier_module_interface {
     return &flow_control_module;
   }
 
+  long long unsigned int *get_mgr_stat() override { return mgr_stat; }
+
   void run_flow_control_step(bool send_stats_flag) override {
     flow_control_module.flow_control_step(&pipeline_stats_member_collector,
                                           send_stats_flag);
@@ -986,6 +990,9 @@ class Applier_module : public Applier_module_interface {
   Pipeline_stats_member_collector pipeline_stats_member_collector;
   Flow_control_module flow_control_module;
   Plugin_stage_monitor_handler stage_handler;
+
+  unsigned long long int mgr_stat[MGR_STAT_ITEMS];
+
   bool has_delayed_view_change_event;
 #ifndef NDEBUG
   int conditional_trap;

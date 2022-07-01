@@ -74,6 +74,9 @@ Applier_module::Applier_module()
                   &suspension_waiting_condition);
 
   has_delayed_view_change_event = false;
+
+  memset(mgr_stat, 0, sizeof(long long unsigned int) * MGR_STAT_ITEMS);
+
 #ifndef NDEBUG
   conditional_trap = 0;
   wait_online = false;

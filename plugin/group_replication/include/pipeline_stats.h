@@ -48,6 +48,7 @@
 #define FLOW_CONTROL_ADD_LEVEL3_WAIT_TIME 50
 #define FLOW_CONTROL_ADD_LEVEL2_WAIT_TIME 20
 #define FLOW_CONTROL_ADD_LEVEL1_WAIT_TIME 10
+#define FLOW_CONTROL_STAT_NUM 16
 
 /**
   Flow control modes:
@@ -657,6 +658,8 @@ class Flow_control_module {
   */
   int32 do_wait();
 
+  unsigned long long int get_flow_control_stat(int index);
+
  private:
   bool check_still_waiting();
 
@@ -701,6 +704,8 @@ class Flow_control_module {
     Remaining seconds to skip flow-control steps
   */
   int seconds_to_skip;
+
+  unsigned long long int m_flow_control_perf_stats[FLOW_CONTROL_STAT_NUM];
 };
 
 #endif /* PIPELINE_STATS_INCLUDED */

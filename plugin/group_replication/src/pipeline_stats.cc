@@ -728,6 +728,8 @@ Flow_control_module::Flow_control_module()
   m_flow_control_need_refreshed = 0;
   m_flow_control_flag = 0;
   m_max_wait_time = FLOW_CONTROL_MAX_WAIT_TIME;
+  memset(m_flow_control_perf_stats, 0,
+         sizeof(long long unsigned int) * FLOW_CONTROL_STAT_NUM);
 
   m_flow_control_module_info_lock = new Checkable_rwlock(
 #ifdef HAVE_PSI_INTERFACE
@@ -758,6 +760,7 @@ void Flow_control_module::flow_control_step(
     if (m_fast_flow_control_mode) {
       m_flow_control_module_info_lock->rdlock();
       bool need_flow_control = false;
+      int wait_msec_added = 0;
       Flow_control_module_info::iterator it = m_info.begin();
       while (it != m_info.end()) {
         if (it->second.get_transactions_waiting_certification() >
@@ -766,13 +769,7 @@ void Flow_control_module::flow_control_step(
           if (it->second.get_transactions_waiting_certification() >
               m_last_apply_queue_size) {
             if (m_last_apply_queue_size) {
-              m_current_wait_msec++;
-              /*
-               * Fast mode's flow control is not suitable for large transactions
-               */
-              if (m_current_wait_msec > 1000) {
-                m_current_wait_msec = 1000;
-              }
+              wait_msec_added++;
             }
             m_last_apply_queue_size =
                 it->second.get_transactions_waiting_certification();
@@ -785,6 +782,13 @@ void Flow_control_module::flow_control_step(
       mysql_mutex_lock(&m_flow_control_lock);
       if (need_flow_control) {
         m_flow_control_flag = 1;
+        m_current_wait_msec += wait_msec_added;
+        /*
+         * Fast mode's flow control is not suitable for large transactions
+         */
+        if (m_current_wait_msec > 1000) {
+          m_current_wait_msec = 1000;
+        }
       } else {
         if (m_wait_counter != m_leave_counter) {
           mysql_cond_broadcast(&m_flow_control_cond);
@@ -836,11 +840,15 @@ void Flow_control_module::flow_control_step(
 
         mysql_mutex_unlock(&m_flow_control_lock);
       } else {
+        mysql_mutex_lock(&m_flow_control_lock);
         m_flow_control_flag = 1;
+        mysql_mutex_unlock(&m_flow_control_lock);
       }
     }
   } else {
+    mysql_mutex_lock(&m_flow_control_lock);
     m_flow_control_flag = 0;
+    mysql_mutex_unlock(&m_flow_control_lock);
   }
 }
 
@@ -914,27 +922,75 @@ bool Flow_control_module::check_still_waiting() {
   return result;
 }
 
+static void perf_stat_for_flow_control(long long unsigned int *stat,
+                                       int value) {
+  if (value <= 10) {
+    stat[0]++;
+  } else if (value <= 20) {
+    stat[1]++;
+  } else if (value <= 30) {
+    stat[2]++;
+  } else if (value <= 40) {
+    stat[3]++;
+  } else if (value <= 50) {
+    stat[4]++;
+  } else if (value <= 100) {
+    stat[5]++;
+  } else if (value <= 200) {
+    stat[6]++;
+  } else if (value <= 300) {
+    stat[7]++;
+  } else if (value <= 400) {
+    stat[8]++;
+  } else if (value <= 500) {
+    stat[9]++;
+  } else if (value <= 1000) {
+    stat[10]++;
+  } else if (value <= 2000) {
+    stat[11]++;
+  } else if (value <= 3000) {
+    stat[12]++;
+  } else if (value <= 4000) {
+    stat[13]++;
+  } else if (value <= 5000) {
+    stat[14]++;
+  } else {
+    stat[15]++;
+  }
+}
+
+unsigned long long int Flow_control_module::get_flow_control_stat(int index) {
+  if (index < 0 || index >= FLOW_CONTROL_STAT_NUM) {
+    return 0;
+  }
+
+  return m_flow_control_perf_stats[index];
+}
+
 int32 Flow_control_module::do_wait() {
   DBUG_TRACE;
 
   if (m_flow_control_flag) {
     if (m_fast_flow_control_mode) {
       struct timespec delay;
-      set_timespec_nsec(&delay, m_current_wait_msec * 1000000ULL);
-
       mysql_mutex_lock(&m_flow_control_lock);
+      set_timespec_nsec(&delay, m_current_wait_msec * 1000000ULL);
       m_wait_counter = m_wait_counter + 1;
       mysql_cond_timedwait(&m_flow_control_cond, &m_flow_control_lock, &delay);
       m_leave_counter = m_leave_counter + 1;
+      perf_stat_for_flow_control(m_flow_control_perf_stats,
+                                 m_current_wait_msec);
       mysql_mutex_unlock(&m_flow_control_lock);
     } else {
       if (m_last_cert_database_size > FLOW_CONTROL_LOWER_THRESHOLD ||
           check_still_waiting()) {
         struct timespec delay;
+        mysql_mutex_lock(&m_flow_control_lock);
         /* 10ms as the first wait time */
         set_timespec_nsec(&delay, m_current_wait_msec * 1000000ULL);
+        perf_stat_for_flow_control(m_flow_control_perf_stats,
+                                   m_current_wait_msec);
 
-        mysql_mutex_lock(&m_flow_control_lock);
         m_wait_counter = m_wait_counter + 1;
         if (m_flow_control_need_refreshed) {
           m_flow_control_need_refreshed = 0;

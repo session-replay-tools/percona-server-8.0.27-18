@@ -147,6 +147,8 @@ table_replication_connection_configuration.h
 table_replication_connection_status.h
 table_replication_group_member_stats.h
 table_replication_group_members.h
+table_replication_group_flow_control_stats.h
+table_replication_group_mgr_stats.h
 table_session_account_connect_attrs.h
 table_session_connect.h
 table_session_connect_attrs.h
@@ -312,6 +314,8 @@ table_replication_connection_configuration.cc
 table_replication_connection_status.cc
 table_replication_group_member_stats.cc
 table_replication_group_members.cc
+table_replication_group_flow_control_stats.cc
+table_replication_group_mgr_stats.cc
 table_session_account_connect_attrs.cc
 table_session_connect.cc
 table_session_connect_attrs.cc
@@ -348,6 +352,8 @@ table_session_account_connect_attrs.cc
 table_replication_asynchronous_connection_failover.cc
 table_replication_connection_configuration.cc
 table_replication_group_members.cc
+table_replication_group_flow_control_stats.cc
+table_replication_group_mgr_stats.cc
 table_replication_connection_status.cc
 table_replication_applier_configuration.cc
 table_replication_applier_status.cc

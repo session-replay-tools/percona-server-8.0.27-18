@@ -40,6 +40,16 @@ bool get_group_member_stats(
     Group_member_info_manager_interface *group_member_manager,
     Gcs_operations *gcs_module, char *channel_name);
 
+bool get_group_flow_control_stats(
+    uint index, const GROUP_REPLICATION_FLOW_CONTROL_STATS_CALLBACKS &callbacks,
+    Group_member_info_manager_interface *group_member_manager,
+    char *channel_name);
+
+bool get_group_mgr_stats(
+    uint index, const GROUP_REPLICATION_MGR_STATS_CALLBACKS &callbacks,
+    Group_member_info_manager_interface *group_member_manager,
+    char *channel_name);
+
 bool get_connection_status(
     const GROUP_REPLICATION_CONNECTION_STATUS_CALLBACKS &callbacks,
     char *group_name_pointer, char *channel_name,

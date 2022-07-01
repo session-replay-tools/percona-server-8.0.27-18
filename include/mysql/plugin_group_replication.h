@@ -125,6 +125,84 @@ struct GROUP_REPLICATION_GROUP_MEMBER_STATS_CALLBACKS {
                                           unsigned long long int value);
 };
 
+struct GROUP_REPLICATION_FLOW_CONTROL_STATS_CALLBACKS {
+  void *const context;
+  void (*set_member_host)(void *const context, const char &value,
+                          size_t length);
+  void (*set_member_port)(void *const context, unsigned int value);
+  void (*set_stat_less_than_10)(void *const context,
+                                unsigned long long int value);
+  void (*set_stat_between_10_and_20)(void *const context,
+                                     unsigned long long int value);
+  void (*set_stat_between_20_and_30)(void *const context,
+                                     unsigned long long int value);
+  void (*set_stat_between_30_and_40)(void *const context,
+                                     unsigned long long int value);
+  void (*set_stat_between_40_and_50)(void *const context,
+                                     unsigned long long int value);
+  void (*set_stat_between_50_and_100)(void *const context,
+                                      unsigned long long int value);
+  void (*set_stat_between_100_and_200)(void *const context,
+                                       unsigned long long int value);
+  void (*set_stat_between_200_and_300)(void *const context,
+                                       unsigned long long int value);
+  void (*set_stat_between_300_and_400)(void *const context,
+                                       unsigned long long int value);
+  void (*set_stat_between_400_and_500)(void *const context,
+                                       unsigned long long int value);
+  void (*set_stat_between_500_and_1000)(void *const context,
+                                        unsigned long long int value);
+  void (*set_stat_between_1000_and_2000)(void *const context,
+                                         unsigned long long int value);
+  void (*set_stat_between_2000_and_3000)(void *const context,
+                                         unsigned long long int value);
+  void (*set_stat_between_3000_and_4000)(void *const context,
+                                         unsigned long long int value);
+  void (*set_stat_between_4000_and_5000)(void *const context,
+                                         unsigned long long int value);
+  void (*set_stat_more_than_5000)(void *const context,
+                                  unsigned long long int value);
+};
+
+struct GROUP_REPLICATION_MGR_STATS_CALLBACKS {
+  void *const context;
+  void (*set_member_host)(void *const context, const char &value,
+                          size_t length);
+  void (*set_member_port)(void *const context, unsigned int value);
+  void (*set_stat_less_than_10)(void *const context,
+                                unsigned long long int value);
+  void (*set_stat_between_10_and_20)(void *const context,
+                                     unsigned long long int value);
+  void (*set_stat_between_20_and_30)(void *const context,
+                                     unsigned long long int value);
+  void (*set_stat_between_30_and_40)(void *const context,
+                                     unsigned long long int value);
+  void (*set_stat_between_40_and_50)(void *const context,
+                                     unsigned long long int value);
+  void (*set_stat_between_50_and_60)(void *const context,
+                                     unsigned long long int value);
+  void (*set_stat_between_60_and_70)(void *const context,
+                                     unsigned long long int value);
+  void (*set_stat_between_70_and_80)(void *const context,
+                                     unsigned long long int value);
+  void (*set_stat_between_80_and_90)(void *const context,
+                                     unsigned long long int value);
+  void (*set_stat_between_90_and_100)(void *const context,
+                                      unsigned long long int value);
+  void (*set_stat_between_100_and_200)(void *const context,
+                                       unsigned long long int value);
+  void (*set_stat_between_200_and_300)(void *const context,
+                                       unsigned long long int value);
+  void (*set_stat_between_300_and_400)(void *const context,
+                                       unsigned long long int value);
+  void (*set_stat_between_400_and_500)(void *const context,
+                                       unsigned long long int value);
+  void (*set_stat_between_500_and_1000)(void *const context,
+                                        unsigned long long int value);
+  void (*set_stat_more_than_1000)(void *const context,
+                                  unsigned long long int value);
+};
+
 struct st_mysql_group_replication {
   int interface_version;
 
@@ -196,6 +274,14 @@ struct st_mysql_group_replication {
   bool (*get_group_member_stats_info)(
       unsigned int index,
       const GROUP_REPLICATION_GROUP_MEMBER_STATS_CALLBACKS &callbacks);
+
+  bool (*get_group_flow_control_stats_info)(
+      unsigned int index,
+      const GROUP_REPLICATION_FLOW_CONTROL_STATS_CALLBACKS &callbacks);
+
+  bool (*get_group_mgr_stats_info)(
+      unsigned int index,
+      const GROUP_REPLICATION_MGR_STATS_CALLBACKS &callbacks);
 
   /*
     Get number of group replication members.

@@ -340,6 +340,42 @@ bool get_group_replication_group_member_stats_info(
   return result;
 }
 
+bool get_group_replication_flow_control_stats_info(
+    unsigned int index,
+    const GROUP_REPLICATION_FLOW_CONTROL_STATS_CALLBACKS &callbacks) {
+  bool result = true;
+
+  plugin_ref plugin =
+      my_plugin_lock_by_name(nullptr, group_replication_plugin_name_str,
+                             MYSQL_GROUP_REPLICATION_PLUGIN);
+  if (plugin != nullptr) {
+    st_mysql_group_replication *plugin_handle =
+        (st_mysql_group_replication *)plugin_decl(plugin)->info;
+    result = plugin_handle->get_group_flow_control_stats_info(index, callbacks);
+    plugin_unlock(nullptr, plugin);
+  }
+
+  return result;
+}
+
+bool get_group_replication_mgr_stats_info(
+    unsigned int index,
+    const GROUP_REPLICATION_MGR_STATS_CALLBACKS &callbacks) {
+  bool result = true;
+
+  plugin_ref plugin =
+      my_plugin_lock_by_name(nullptr, group_replication_plugin_name_str,
+                             MYSQL_GROUP_REPLICATION_PLUGIN);
+  if (plugin != nullptr) {
+    st_mysql_group_replication *plugin_handle =
+        (st_mysql_group_replication *)plugin_decl(plugin)->info;
+    result = plugin_handle->get_group_mgr_stats_info(index, callbacks);
+    plugin_unlock(nullptr, plugin);
+  }
+
+  return result;
+}
+
 unsigned int get_group_replication_members_number_info() {
   unsigned int result = 0;
 

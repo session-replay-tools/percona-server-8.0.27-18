@@ -199,6 +199,7 @@ extern SERVICE_TYPE_NO_CONST(mysql_runtime_error) * mysql_runtime_error_service;
 bool server_engine_initialized();
 void *get_plugin_pointer();
 mysql_mutex_t *get_plugin_running_lock();
+mysql_mutex_t *get_mgr_stats_lock();
 mysql_mutex_t *get_plugin_applier_module_lock();
 Plugin_waitlock *get_plugin_online_lock();
 int initialize_plugin_and_join(enum_plugin_con_isolation sql_api_isolation,
@@ -286,6 +287,11 @@ bool plugin_get_group_members(
 bool plugin_get_group_member_stats(
     uint index,
     const GROUP_REPLICATION_GROUP_MEMBER_STATS_CALLBACKS &callbacks);
+bool plugin_get_group_flow_control_stats(
+    uint index,
+    const GROUP_REPLICATION_FLOW_CONTROL_STATS_CALLBACKS &callbacks);
+bool plugin_get_group_mgr_stats(
+    uint index, const GROUP_REPLICATION_MGR_STATS_CALLBACKS &callbacks);
 uint plugin_get_group_members_number();
 void plugin_update_zone_id_for_communication_node(const char *ip, int zone_id,
                                                   bool zone_id_sync_mode);

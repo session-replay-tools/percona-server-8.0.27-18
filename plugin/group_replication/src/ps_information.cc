@@ -284,6 +284,182 @@ bool get_group_member_stats(
   return false;
 }
 
+bool get_group_flow_control_stats(
+    uint index, const GROUP_REPLICATION_FLOW_CONTROL_STATS_CALLBACKS &callbacks,
+    Group_member_info_manager_interface *group_member_manager,
+    char *channel_name) {
+  /*
+   This case means that the plugin has never been initialized...
+   and one would not be able to extract information
+   */
+  if (group_member_manager == nullptr) {
+    LogPluginErrMsg(INFORMATION_LEVEL, ER_LOG_PRINTF_MSG,
+                    "get_group_flow_control_stats, leave at pos 1");
+    return false;
+  }
+
+  Group_member_info *member_info = nullptr;
+  if (local_member_info) {
+    member_info = group_member_manager->get_group_member_info(
+        local_member_info->get_uuid());
+  }
+
+  if (member_info == nullptr)  // The requested member is not managed...
+  {
+    LogPluginErrMsg(INFORMATION_LEVEL, ER_LOG_PRINTF_MSG,
+                    "get_group_flow_control_stats, leave at pos 2");
+    return true; /* purecov: inspected */
+  }
+
+  if (local_member_info->get_recovery_status() ==
+      Group_member_info::MEMBER_OFFLINE) {
+    delete member_info;
+    LogPluginErrMsg(INFORMATION_LEVEL, ER_LOG_PRINTF_MSG,
+                    "get_group_flow_control_stats, leave at pos 3");
+    return false;
+  }
+
+  // Check if the group replication has started and a valid certifier exists
+  MUTEX_LOCK(lock, get_plugin_applier_module_lock());
+  bool ret = (!get_plugin_is_stopping() && applier_module != nullptr);
+  if (!ret) {
+    LogPluginErrMsg(INFORMATION_LEVEL, ER_LOG_PRINTF_MSG,
+                    "get_group_flow_control_stats, ret is false at pos 1");
+  }
+
+  ret = ret && plugin_is_group_replication_running();
+  if (!ret) {
+    LogPluginErrMsg(INFORMATION_LEVEL, ER_LOG_PRINTF_MSG,
+                    "get_group_flow_control_stats, ret is false at pos 2");
+  } else {
+    std::string hostname(member_info->get_hostname());
+    callbacks.set_member_host(callbacks.context, *hostname.c_str(),
+                              hostname.length());
+
+    callbacks.set_member_port(callbacks.context, member_info->get_port());
+
+    Flow_control_module *flow = applier_module->get_flow_control_module();
+
+    /* local member information */
+    callbacks.set_stat_less_than_10(callbacks.context,
+                                    flow->get_flow_control_stat(0));
+    callbacks.set_stat_between_10_and_20(callbacks.context,
+                                         flow->get_flow_control_stat(1));
+    callbacks.set_stat_between_20_and_30(callbacks.context,
+                                         flow->get_flow_control_stat(2));
+    callbacks.set_stat_between_30_and_40(callbacks.context,
+                                         flow->get_flow_control_stat(3));
+    callbacks.set_stat_between_40_and_50(callbacks.context,
+                                         flow->get_flow_control_stat(4));
+    callbacks.set_stat_between_50_and_100(callbacks.context,
+                                          flow->get_flow_control_stat(5));
+    callbacks.set_stat_between_100_and_200(callbacks.context,
+                                           flow->get_flow_control_stat(6));
+    callbacks.set_stat_between_200_and_300(callbacks.context,
+                                           flow->get_flow_control_stat(7));
+    callbacks.set_stat_between_300_and_400(callbacks.context,
+                                           flow->get_flow_control_stat(8));
+    callbacks.set_stat_between_400_and_500(callbacks.context,
+                                           flow->get_flow_control_stat(9));
+    callbacks.set_stat_between_500_and_1000(callbacks.context,
+                                            flow->get_flow_control_stat(10));
+    callbacks.set_stat_between_1000_and_2000(callbacks.context,
+                                             flow->get_flow_control_stat(11));
+    callbacks.set_stat_between_2000_and_3000(callbacks.context,
+                                             flow->get_flow_control_stat(12));
+    callbacks.set_stat_between_3000_and_4000(callbacks.context,
+                                             flow->get_flow_control_stat(13));
+    callbacks.set_stat_between_4000_and_5000(callbacks.context,
+                                             flow->get_flow_control_stat(14));
+    callbacks.set_stat_more_than_5000(callbacks.context,
+                                      flow->get_flow_control_stat(15));
+  }
+
+  delete member_info;
+
+  return false;
+}
+
+bool get_group_mgr_stats(
+    uint index, const GROUP_REPLICATION_MGR_STATS_CALLBACKS &callbacks,
+    Group_member_info_manager_interface *group_member_manager,
+    char *channel_name) {
+  /*
+   This case means that the plugin has never been initialized...
+   and one would not be able to extract information
+   */
+  if (group_member_manager == nullptr) {
+    LogPluginErrMsg(INFORMATION_LEVEL, ER_LOG_PRINTF_MSG,
+                    "get_group_mgr_stats, leave at pos 1");
+    return false;
+  }
+
+  Group_member_info *member_info = nullptr;
+  if (local_member_info) {
+    member_info = group_member_manager->get_group_member_info(
+        local_member_info->get_uuid());
+  }
+
+  if (member_info == nullptr)  // The requested member is not managed...
+  {
+    LogPluginErrMsg(INFORMATION_LEVEL, ER_LOG_PRINTF_MSG,
+                    "get_group_mgr_stats, leave at pos 2");
+    return true; /* purecov: inspected */
+  }
+
+  if (local_member_info->get_recovery_status() ==
+      Group_member_info::MEMBER_OFFLINE) {
+    delete member_info;
+    LogPluginErrMsg(INFORMATION_LEVEL, ER_LOG_PRINTF_MSG,
+                    "get_group_mgr_stats, leave at pos 3");
+    return false;
+  }
+
+  // Check if the group replication has started and a valid certifier exists
+  MUTEX_LOCK(lock, get_plugin_applier_module_lock());
+  bool ret = (!get_plugin_is_stopping() && applier_module != nullptr);
+  if (!ret) {
+    LogPluginErrMsg(INFORMATION_LEVEL, ER_LOG_PRINTF_MSG,
+                    "get_group_mgr_stats, ret is false at pos 1");
+  }
+
+  ret = ret && plugin_is_group_replication_running();
+  if (!ret) {
+    LogPluginErrMsg(INFORMATION_LEVEL, ER_LOG_PRINTF_MSG,
+                    "get_group_mgr_stats, ret is false at pos 2");
+  } else {
+    std::string hostname(member_info->get_hostname());
+    callbacks.set_member_host(callbacks.context, *hostname.c_str(),
+                              hostname.length());
+
+    callbacks.set_member_port(callbacks.context, member_info->get_port());
+
+    long long unsigned int *mgr_stat = applier_module->get_mgr_stat();
+
+    /* local member information */
+    callbacks.set_stat_less_than_10(callbacks.context, mgr_stat[0]);
+    callbacks.set_stat_between_10_and_20(callbacks.context, mgr_stat[1]);
+    callbacks.set_stat_between_20_and_30(callbacks.context, mgr_stat[2]);
+    callbacks.set_stat_between_30_and_40(callbacks.context, mgr_stat[3]);
+    callbacks.set_stat_between_40_and_50(callbacks.context, mgr_stat[4]);
+    callbacks.set_stat_between_50_and_60(callbacks.context, mgr_stat[5]);
+    callbacks.set_stat_between_60_and_70(callbacks.context, mgr_stat[6]);
+    callbacks.set_stat_between_70_and_80(callbacks.context, mgr_stat[7]);
+    callbacks.set_stat_between_80_and_90(callbacks.context, mgr_stat[8]);
+    callbacks.set_stat_between_90_and_100(callbacks.context, mgr_stat[9]);
+    callbacks.set_stat_between_100_and_200(callbacks.context, mgr_stat[10]);
+    callbacks.set_stat_between_200_and_300(callbacks.context, mgr_stat[11]);
+    callbacks.set_stat_between_300_and_400(callbacks.context, mgr_stat[12]);
+    callbacks.set_stat_between_400_and_500(callbacks.context, mgr_stat[13]);
+    callbacks.set_stat_between_500_and_1000(callbacks.context, mgr_stat[14]);
+    callbacks.set_stat_more_than_1000(callbacks.context, mgr_stat[15]);
+  }
+
+  delete member_info;
+
+  return false;
+}
+
 bool get_connection_status(
     const GROUP_REPLICATION_CONNECTION_STATUS_CALLBACKS &callbacks,
     char *group_name_pointer, char *channel_name,
