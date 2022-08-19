@@ -358,6 +358,7 @@ int Applier_module::apply_data_packet(Data_packet *data_packet,
                                       Format_description_log_event *fde_evt,
                                       Continuation *cont, bool io_buffered) {
   int error = 0;
+  int event_num = 0, i = 0;
   uchar *payload = data_packet->payload;
   uchar *payload_end = data_packet->payload + data_packet->len;
 
@@ -365,6 +366,15 @@ int Applier_module::apply_data_packet(Data_packet *data_packet,
     const char act[] = "now wait_for continue_apply";
     assert(!debug_sync_set_action(current_thd, STRING_WITH_LEN(act)));
   });
+
+  /* Retrieve event num for this data packet */
+  while ((payload != payload_end) && !error) {
+    uint event_len = uint4korr(((uchar *)payload) + EVENT_LEN_OFFSET);
+    payload = payload + event_len;
+    event_num++;
+  }
+
+  payload = data_packet->payload;
 
   while ((payload != payload_end) && !error) {
     uint event_len = uint4korr(((uchar *)payload) + EVENT_LEN_OFFSET);
@@ -387,7 +397,12 @@ int Applier_module::apply_data_packet(Data_packet *data_packet,
     Pipeline_event *pevent =
         new Pipeline_event(new_packet, fde_evt, UNDEFINED_EVENT_MODIFIER,
                            consistency_level, online_members);
-    error = inject_event_into_pipeline(pevent, cont, io_buffered);
+    i++;
+    if (i < event_num) {
+      error = inject_event_into_pipeline(pevent, cont, true);
+    } else {
+      error = inject_event_into_pipeline(pevent, cont, io_buffered);
+    }
 
     delete pevent;
     DBUG_EXECUTE_IF("stop_applier_channel_after_reading_write_rows_log_event", {

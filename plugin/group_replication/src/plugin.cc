@@ -5169,12 +5169,12 @@ static MYSQL_SYSVAR_UINT(applier_batch_size_threshold,        /* name */
                          PLUGIN_VAR_OPCMDARG |
                              PLUGIN_VAR_PERSIST_AS_READ_ONLY, /* optional var */
                          "minimum event size in applier queue for batching",
-                         nullptr,   /* check func. */
-                         nullptr,   /* update func. */
-                         5000000,   /* default */
-                         10,        /* min */
-                         100000000, /* max */
-                         0          /* block */
+                         nullptr,  /* check func. */
+                         nullptr,  /* update func. */
+                         100000,   /* default */
+                         10000,    /* min */
+                         10000000, /* max */
+                         0         /* block */
 );
 
 static MYSQL_SYSVAR_LONG(

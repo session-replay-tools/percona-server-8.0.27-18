@@ -148,7 +148,7 @@ using std::string;
 #define MY_OFF_T_UNDEF (~(my_off_t)0UL)
 
 #define MAX_EVENT_BUFFER_SIZE 4194304
-#define MAX_EVENT_BUFFER_NUM 100
+#define MAX_EVENT_BUFFER_NUM 256
 
 /*
   Constants required for the limit unsafe warnings suppression
