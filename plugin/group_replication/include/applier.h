@@ -461,7 +461,7 @@ class Applier_module : public Applier_module_interface {
       @retval !=0    Error executing the action
   */
   int handle_pipeline_action(Pipeline_action *action) override {
-    return this->pipeline->handle_action(action, false);
+    return this->pipeline->handle_action(action);
   }
 
   /**
@@ -474,8 +474,7 @@ class Applier_module : public Applier_module_interface {
        @retval 0      OK
        @retval !=0    Error on queue
    */
-  int inject_event_into_pipeline(Pipeline_event *pevent, Continuation *cont,
-                                 bool io_buffered);
+  int inject_event_into_pipeline(Pipeline_event *pevent, Continuation *cont);
 
   /**
     Terminates the pipeline, shutting down the handlers and deleting them.
@@ -499,7 +498,7 @@ class Applier_module : public Applier_module_interface {
     // Configure any thread based applier
     Handler_applier_configuration_action *conf_action =
         new Handler_applier_configuration_action(timeout);
-    pipeline->handle_action(conf_action, false);
+    pipeline->handle_action(conf_action);
 
     delete conf_action;
   }

@@ -989,8 +989,7 @@ int Transaction_consistency_manager::remove_prepared_transaction(
       m_delayed_view_change_events.pop_front();
 
       Continuation cont;
-      int error =
-          applier_module->inject_event_into_pipeline(pevent, &cont, false);
+      int error = applier_module->inject_event_into_pipeline(pevent, &cont);
       delete pevent;
       if (error) {
         abort_plugin_process("unable to log the View_change_log_event");

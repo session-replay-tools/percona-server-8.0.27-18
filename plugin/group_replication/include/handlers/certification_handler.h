@@ -32,9 +32,8 @@ class Certification_handler : public Event_handler {
  public:
   Certification_handler();
   ~Certification_handler() override;
-  int handle_event(Pipeline_event *ev, Continuation *cont,
-                   bool io_buffered) override;
-  int handle_action(Pipeline_action *action, bool io_buffered) override;
+  int handle_event(Pipeline_event *ev, Continuation *cont) override;
+  int handle_action(Pipeline_action *action) override;
   int initialize() override;
   int terminate() override;
   bool is_unique() override;
@@ -114,8 +113,7 @@ class Certification_handler : public Event_handler {
       @retval 0      OK
       @retval !=0    Error
    */
-  int handle_transaction_context(Pipeline_event *pevent, Continuation *cont,
-                                 bool io_buffered);
+  int handle_transaction_context(Pipeline_event *pevent, Continuation *cont);
 
   /**
     This methods handles transaction identifier events, it does two tasks:
@@ -132,16 +130,14 @@ class Certification_handler : public Event_handler {
       @retval 0      OK
       @retval !=0    Error
   */
-  int handle_transaction_id(Pipeline_event *pevent, Continuation *cont,
-                            bool io_buffered);
+  int handle_transaction_id(Pipeline_event *pevent, Continuation *cont);
 
   /*
     This method extracts the certification db and the sequence number from
     the certifier injecting them in a View change event to be sent to a possible
     joiner.
   */
-  int extract_certification_info(Pipeline_event *pevent, Continuation *cont,
-                                 bool io_buffered);
+  int extract_certification_info(Pipeline_event *pevent, Continuation *cont);
 
   /**
     This methods guarantees that the view change event is logged after local

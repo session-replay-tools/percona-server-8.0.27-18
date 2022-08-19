@@ -155,7 +155,7 @@ int Applier_module::purge_applier_queue_and_restart_applier_module() {
 
   /* Stop the applier thread */
   Pipeline_action *stop_action = new Handler_stop_action();
-  error = pipeline->handle_action(stop_action, false);
+  error = pipeline->handle_action(stop_action);
   delete stop_action;
   if (error) return error; /* purecov: inspected */
 
@@ -165,7 +165,7 @@ int Applier_module::purge_applier_queue_and_restart_applier_module() {
           applier_module_channel_name, true, /* purge relay logs always*/
           stop_wait_timeout, group_replication_sidno);
 
-  error = pipeline->handle_action(applier_conf_action, false);
+  error = pipeline->handle_action(applier_conf_action);
   delete applier_conf_action;
   if (error) return error; /* purecov: inspected */
 
@@ -175,7 +175,7 @@ int Applier_module::purge_applier_queue_and_restart_applier_module() {
 
   /* Start the applier thread */
   Pipeline_action *start_action = new Handler_start_action();
-  error = pipeline->handle_action(start_action, false);
+  error = pipeline->handle_action(start_action);
   delete start_action;
 
   return error;
@@ -192,7 +192,7 @@ int Applier_module::setup_pipeline_handlers() {
           applier_module_channel_name, reset_applier_logs, stop_wait_timeout,
           group_replication_sidno);
 
-  error = pipeline->handle_action(applier_conf_action, false);
+  error = pipeline->handle_action(applier_conf_action);
   delete applier_conf_action;
   if (error) return error; /* purecov: inspected */
 
@@ -200,7 +200,7 @@ int Applier_module::setup_pipeline_handlers() {
       new Handler_certifier_configuration_action(group_replication_sidno,
                                                  gtid_assignment_block_size);
 
-  error = pipeline->handle_action(cert_conf_action, false);
+  error = pipeline->handle_action(cert_conf_action);
 
   delete cert_conf_action;
 
@@ -254,10 +254,9 @@ void Applier_module::clean_applier_thread_context() {
 }
 
 int Applier_module::inject_event_into_pipeline(Pipeline_event *pevent,
-                                               Continuation *cont,
-                                               bool io_buffered) {
+                                               Continuation *cont) {
   int error = 0;
-  pipeline->handle_event(pevent, cont, io_buffered);
+  pipeline->handle_event(pevent, cont);
 
   if ((error = cont->wait()))
     LogPluginErr(ERROR_LEVEL, ER_GRP_RPL_EVENT_HANDLING_ERROR, error);
@@ -348,7 +347,7 @@ int Applier_module::apply_view_change_packet(
     return error;
   }
 
-  error = inject_event_into_pipeline(pevent, cont, false);
+  error = inject_event_into_pipeline(pevent, cont);
   if (!cont->is_transaction_discarded()) delete pevent;
 
   return error;
@@ -358,7 +357,6 @@ int Applier_module::apply_data_packet(Data_packet *data_packet,
                                       Format_description_log_event *fde_evt,
                                       Continuation *cont, bool io_buffered) {
   int error = 0;
-  int event_num = 0, i = 0;
   uchar *payload = data_packet->payload;
   uchar *payload_end = data_packet->payload + data_packet->len;
 
@@ -366,15 +364,6 @@ int Applier_module::apply_data_packet(Data_packet *data_packet,
     const char act[] = "now wait_for continue_apply";
     assert(!debug_sync_set_action(current_thd, STRING_WITH_LEN(act)));
   });
-
-  /* Retrieve event num for this data packet */
-  while ((payload != payload_end) && !error) {
-    uint event_len = uint4korr(((uchar *)payload) + EVENT_LEN_OFFSET);
-    payload = payload + event_len;
-    event_num++;
-  }
-
-  payload = data_packet->payload;
 
   while ((payload != payload_end) && !error) {
     uint event_len = uint4korr(((uchar *)payload) + EVENT_LEN_OFFSET);
@@ -397,12 +386,13 @@ int Applier_module::apply_data_packet(Data_packet *data_packet,
     Pipeline_event *pevent =
         new Pipeline_event(new_packet, fde_evt, UNDEFINED_EVENT_MODIFIER,
                            consistency_level, online_members);
-    i++;
-    if (i < event_num) {
-      error = inject_event_into_pipeline(pevent, cont, true);
+    if (payload != payload_end) {
+      pevent->set_io_buffered(true);
     } else {
-      error = inject_event_into_pipeline(pevent, cont, io_buffered);
+      pevent->set_io_buffered(io_buffered);
     }
+
+    error = inject_event_into_pipeline(pevent, cont);
 
     delete pevent;
     DBUG_EXECUTE_IF("stop_applier_channel_after_reading_write_rows_log_event", {
@@ -557,7 +547,7 @@ int Applier_module::applier_thread_handle() {
 
   if (!applier_error) {
     Pipeline_action *start_action = new Handler_start_action();
-    applier_error += pipeline->handle_action(start_action, false);
+    applier_error += pipeline->handle_action(start_action);
     delete start_action;
   }
 
@@ -588,7 +578,7 @@ int Applier_module::applier_thread_handle() {
   // Give the handlers access to the applier THD
   thd_conf_action = new Handler_THD_setup_action(applier_thd);
   // To prevent overwrite last error method
-  applier_error += pipeline->handle_action(thd_conf_action, false);
+  applier_error += pipeline->handle_action(thd_conf_action);
   delete thd_conf_action;
 
   // Update thread instrumentation
@@ -774,7 +764,7 @@ end:
   // Even on error cases, send a stop signal to all handlers that could be
   // active
   Pipeline_action *stop_action = new Handler_stop_action();
-  int local_applier_error = pipeline->handle_action(stop_action, false);
+  int local_applier_error = pipeline->handle_action(stop_action);
   delete stop_action;
 
   Gcs_interface_factory::cleanup_thread_communication_resources(

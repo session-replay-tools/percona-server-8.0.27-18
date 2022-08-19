@@ -106,8 +106,7 @@ int Applier_handler::stop_applier_thread() {
   return error;
 }
 
-int Applier_handler::handle_event(Pipeline_event *event, Continuation *cont,
-                                  bool io_buffered) {
+int Applier_handler::handle_event(Pipeline_event *event, Continuation *cont) {
   DBUG_TRACE;
   int error = 0;
   Data_packet *p = nullptr;
@@ -131,7 +130,7 @@ int Applier_handler::handle_event(Pipeline_event *event, Continuation *cont,
   */
   if (event->get_event_type() != binary_log::TRANSACTION_CONTEXT_EVENT) {
     error = channel_interface.queue_packet((const char *)p->payload, p->len,
-                                           io_buffered);
+                                           event->get_io_buffered());
 
     if (event->get_event_type() == binary_log::GTID_LOG_EVENT) {
       if (!event->is_view_generated()) {
@@ -145,12 +144,12 @@ end:
   if (error)
     cont->signal(error);
   else
-    next(event, cont, io_buffered);
+    next(event, cont);
 
   return error;
 }
 
-int Applier_handler::handle_action(Pipeline_action *action, bool io_buffered) {
+int Applier_handler::handle_action(Pipeline_action *action) {
   DBUG_TRACE;
   int error = 0;
 
@@ -189,7 +188,7 @@ int Applier_handler::handle_action(Pipeline_action *action, bool io_buffered) {
 
   if (error) return error;
 
-  return next(action, io_buffered);
+  return next(action);
 }
 
 bool Applier_handler::is_unique() { return true; }

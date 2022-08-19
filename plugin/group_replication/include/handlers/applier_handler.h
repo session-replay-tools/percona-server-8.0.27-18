@@ -32,9 +32,8 @@
 class Applier_handler : public Event_handler {
  public:
   Applier_handler();
-  int handle_event(Pipeline_event *ev, Continuation *cont,
-                   bool io_buffered) override;
-  int handle_action(Pipeline_action *action, bool io_buffered) override;
+  int handle_event(Pipeline_event *ev, Continuation *cont) override;
+  int handle_action(Pipeline_action *action) override;
   int initialize() override;
   int terminate() override;
   bool is_unique() override;

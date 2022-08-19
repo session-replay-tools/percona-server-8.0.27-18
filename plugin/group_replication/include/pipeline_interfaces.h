@@ -146,7 +146,8 @@ class Pipeline_event {
         m_consistency_level(consistency_level),
         m_online_members(online_members),
         m_online_members_memory_ownership(true),
-        m_view_generated(false) {}
+        m_view_generated(false),
+        m_io_buffered(false) {}
 
   /**
     Create a new pipeline wrapper based on a log event.
@@ -172,7 +173,8 @@ class Pipeline_event {
         m_consistency_level(consistency_level),
         m_online_members(online_members),
         m_online_members_memory_ownership(true),
-        m_view_generated(false) {}
+        m_view_generated(false),
+        m_io_buffered(false) {}
 
   ~Pipeline_event() {
     if (packet != nullptr) {
@@ -339,6 +341,10 @@ class Pipeline_event {
     m_online_members_memory_ownership = false;
   }
 
+  void set_io_buffered(bool io_buffered) { m_io_buffered = io_buffered; }
+
+  bool get_io_buffered() { return m_io_buffered; }
+
  private:
   /**
     Converts the existing packet into a log event.
@@ -399,6 +405,7 @@ class Pipeline_event {
   std::list<Gcs_member_identifier> *m_online_members;
   bool m_online_members_memory_ownership;
   bool m_view_generated;
+  bool m_io_buffered;
 };
 
 /**
@@ -568,8 +575,8 @@ class Event_handler {
     @param[in]      event           the pipeline event to be handled
     @param[in,out]  continuation    termination notification object.
   */
-  virtual int handle_event(Pipeline_event *event, Continuation *continuation,
-                           bool io_buffered) = 0;
+  virtual int handle_event(Pipeline_event *event,
+                           Continuation *continuation) = 0;
 
   /**
     Handling of an action as defined in the handler implementation.
@@ -584,7 +591,7 @@ class Event_handler {
 
     @param[in]      action         the pipeline event to be handled
   */
-  virtual int handle_action(Pipeline_action *action, bool io_buffered) = 0;
+  virtual int handle_action(Pipeline_action *action) = 0;
 
   // pipeline appending methods
 
@@ -717,10 +724,9 @@ class Event_handler {
     @param[in]      event           the pipeline event to be handled
     @param[in,out]  continuation    termination notification object.
   */
-  int next(Pipeline_event *event, Continuation *continuation,
-           bool io_buffered) {
+  int next(Pipeline_event *event, Continuation *continuation) {
     if (next_in_pipeline)
-      next_in_pipeline->handle_event(event, continuation, io_buffered);
+      next_in_pipeline->handle_event(event, continuation);
     else
       continuation->signal();
     return 0;
@@ -732,11 +738,10 @@ class Event_handler {
 
     @param[in]  action     the pipeline action to be handled
   */
-  int next(Pipeline_action *action, bool io_buffered) {
+  int next(Pipeline_action *action) {
     int error = 0;
 
-    if (next_in_pipeline)
-      error = next_in_pipeline->handle_action(action, io_buffered);
+    if (next_in_pipeline) error = next_in_pipeline->handle_action(action);
 
     return error;
   }

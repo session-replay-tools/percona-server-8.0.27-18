@@ -72,8 +72,7 @@ int Certification_handler::terminate() {
   return error;
 }
 
-int Certification_handler::handle_action(Pipeline_action *action,
-                                         bool io_buffered) {
+int Certification_handler::handle_action(Pipeline_action *action) {
   DBUG_TRACE;
 
   int error = 0;
@@ -112,23 +111,23 @@ int Certification_handler::handle_action(Pipeline_action *action,
 
   if (error) return error;
 
-  return next(action, io_buffered);
+  return next(action);
 }
 
 int Certification_handler::handle_event(Pipeline_event *pevent,
-                                        Continuation *cont, bool io_buffered) {
+                                        Continuation *cont) {
   DBUG_TRACE;
 
   Log_event_type ev_type = pevent->get_event_type();
   switch (ev_type) {
     case binary_log::TRANSACTION_CONTEXT_EVENT:
-      return handle_transaction_context(pevent, cont, false);
+      return handle_transaction_context(pevent, cont);
     case binary_log::GTID_LOG_EVENT:
-      return handle_transaction_id(pevent, cont, io_buffered);
+      return handle_transaction_id(pevent, cont);
     case binary_log::VIEW_CHANGE_EVENT:
-      return extract_certification_info(pevent, cont, io_buffered);
+      return extract_certification_info(pevent, cont);
     default:
-      next(pevent, cont, io_buffered);
+      next(pevent, cont);
       return 0;
   }
 }
@@ -204,8 +203,7 @@ void Certification_handler::reset_transaction_context() {
 }
 
 int Certification_handler::handle_transaction_context(Pipeline_event *pevent,
-                                                      Continuation *cont,
-                                                      bool io_buffered) {
+                                                      Continuation *cont) {
   DBUG_TRACE;
   int error = 0;
 
@@ -213,14 +211,13 @@ int Certification_handler::handle_transaction_context(Pipeline_event *pevent,
   if (error)
     cont->signal(1, true); /* purecov: inspected */
   else
-    next(pevent, cont, io_buffered);
+    next(pevent, cont);
 
   return error;
 }
 
 int Certification_handler::handle_transaction_id(Pipeline_event *pevent,
-                                                 Continuation *cont,
-                                                 bool io_buffered) {
+                                                 Continuation *cont) {
   DBUG_TRACE;
   int error = 0;
   rpl_gno seq_number = 0;
@@ -463,7 +460,7 @@ after_certify:
       }
 
       // Pass transaction to next action.
-      next(pevent, cont, io_buffered);
+      next(pevent, cont);
     } else if (seq_number < 0) {
       error = 1;
       cont->signal(1, true);
@@ -480,8 +477,7 @@ end:
 }
 
 int Certification_handler::extract_certification_info(Pipeline_event *pevent,
-                                                      Continuation *cont,
-                                                      bool io_buffered) {
+                                                      Continuation *cont) {
   DBUG_TRACE;
   int error = 0;
 
@@ -494,7 +490,7 @@ int Certification_handler::extract_certification_info(Pipeline_event *pevent,
       On that case we just have to queue it on the group applier
       channel, without any special handling.
     */
-    next(pevent, cont, io_buffered);
+    next(pevent, cont);
     return error;
   }
 
@@ -690,7 +686,7 @@ int Certification_handler::inject_transactional_events(Pipeline_event *pevent,
 
   gtid_pipeline_event->set_view_generated();
 
-  next(gtid_pipeline_event, cont, false);
+  next(gtid_pipeline_event, cont);
 
   int error = cont->wait();
   delete gtid_pipeline_event;
@@ -705,7 +701,7 @@ int Certification_handler::inject_transactional_events(Pipeline_event *pevent,
 
   Pipeline_event *begin_pipeline_event =
       new Pipeline_event(begin_log_event, fd_event);
-  next(begin_pipeline_event, cont, false);
+  next(begin_pipeline_event, cont);
 
   error = cont->wait();
   delete begin_pipeline_event;
@@ -718,7 +714,7 @@ int Certification_handler::inject_transactional_events(Pipeline_event *pevent,
    As we don't have asynchronous we can use the received Continuation.
    If that is no longer true, another Continuation object must be created here.
   */
-  next(pevent, cont, false);
+  next(pevent, cont);
   error = cont->wait();
   if (error) {
     return 0; /* purecov: inspected */
@@ -732,7 +728,7 @@ int Certification_handler::inject_transactional_events(Pipeline_event *pevent,
 
   Pipeline_event *end_pipeline_event =
       new Pipeline_event(end_log_event, fd_event);
-  next(end_pipeline_event, cont, false);
+  next(end_pipeline_event, cont);
   delete end_pipeline_event;
 
   return 0;
