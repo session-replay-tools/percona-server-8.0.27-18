@@ -4319,10 +4319,12 @@ static void handle_accept(site_def const *site, pax_machine *p,
             if (pm) {
               skip_flag = true;
               pax_msg *msg = pax_msg_new(msg_no, site);
+              ref_msg(msg);
               prepare(msg, skip_op);
               msg->msg_type = no_op;
               send_skip_msg_to_others(site, msg, m->synode.node);
               handle_skip(site, pm, msg);
+              unref_msg(&msg);
               participate_paxos[m->synode.msgno % MAX_ARRAY_LEN] = 1;
             }
           }
